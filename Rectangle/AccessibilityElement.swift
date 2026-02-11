@@ -39,6 +39,10 @@ class AccessibilityElement {
         return array.map { AccessibilityElement($0) }
     }
     
+    var title: String? {
+        return wrappedElement.getValue(.title) as? String
+    }
+
     private var role: NSAccessibility.Role? {
         guard let value = wrappedElement.getValue(.role) as? String else { return nil }
         return NSAccessibility.Role(rawValue: value)
@@ -293,6 +297,10 @@ class AccessibilityElement {
         if let pid = pid, let app = NSRunningApplication(processIdentifier: pid), !app.isActive || force {
             app.activate(options: .activateIgnoringOtherApps)
         }
+    }
+
+    func performAction(_ action: String) {
+        AXUIElementPerformAction(wrappedElement, action as CFString)
     }
 }
 

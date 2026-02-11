@@ -46,7 +46,14 @@ class SettingsViewController: NSViewController {
 
     private var aboutTodoWindowController: NSWindowController?
     private var extraSettingsPopover: NSPopover?
-    
+
+    private var modalModeCheckbox: NSButton!
+    private var modalModeView: NSStackView!
+    private var modalModeViewHeightConstraint: NSLayoutConstraint!
+    private var modalModeShortcutView: MASShortcutView!
+    private var gridColumnsField: NSTextField!
+    private var gridRowsField: NSTextField!
+
     private var cycleSizeCheckboxes = [NSButton]()
     
     @IBAction func toggleLaunchOnLogin(_ sender: NSButton) {
@@ -145,6 +152,36 @@ class SettingsViewController: NSViewController {
         showHideTodoModeSettings(animated: true)
         Notification.Name.todoMenuToggled.post()
     }
+
+    @objc func toggleModalMode(_ sender: NSButton) {
+        let newSetting: Bool = sender.state == .on
+        Defaults.modalMode.enabled = newSetting
+        showHideModalModeSettings(animated: true)
+        ModalModeManager.shared.reloadFromDefaults()
+    }
+
+    @objc func gridColumnsChanged(_ sender: NSTextField) {
+        let value = max(2, min(12, sender.integerValue))
+        Defaults.modalGridColumns.value = value
+        sender.integerValue = value
+    }
+
+    @objc func gridColumnsStepperChanged(_ sender: NSStepper) {
+        Defaults.modalGridColumns.value = sender.integerValue
+        gridColumnsField?.integerValue = sender.integerValue
+    }
+
+    @objc func gridRowsChanged(_ sender: NSTextField) {
+        let value = max(2, min(8, sender.integerValue))
+        Defaults.modalGridRows.value = value
+        sender.integerValue = value
+    }
+
+    @objc func gridRowsStepperChanged(_ sender: NSStepper) {
+        Defaults.modalGridRows.value = sender.integerValue
+        gridRowsField?.integerValue = sender.integerValue
+    }
+
     
     @IBAction func showTodoModeHelp(_ sender: Any) {
         if aboutTodoWindowController == nil {
@@ -531,7 +568,8 @@ class SettingsViewController: NSViewController {
         updateCheckForUpdatesTitle()
         
         initializeTodoModeSettings()
-        
+        initializeModalModeSettings()
+
         self.cycleSizeCheckboxes.forEach {
             $0.removeFromSuperview()
         }
@@ -546,6 +584,7 @@ class SettingsViewController: NSViewController {
         
         Notification.Name.configImported.onPost(using: {_ in
             self.initializeTodoModeSettings()
+            self.initializeModalModeSettings()
             self.initializeToggles()
             self.initializeCycleSizesView(animated: false)
         })
@@ -582,6 +621,140 @@ class SettingsViewController: NSViewController {
     
     private func showHideTodoModeSettings(animated: Bool) {
         setVisibility(shown: Defaults.todo.userEnabled, ofView: todoView, withConstraint: todoViewHeightConstraint, animated: animated)
+    }
+
+    func initializeModalModeSettings() {
+        guard let parentStackView = stageView.superview as? NSStackView else { return }
+
+        if modalModeCheckbox == nil {
+            let separator = NSBox()
+            separator.boxType = .separator
+            separator.translatesAutoresizingMaskIntoConstraints = false
+            let separatorContainer = NSView()
+            separatorContainer.translatesAutoresizingMaskIntoConstraints = false
+            separatorContainer.addSubview(separator)
+            NSLayoutConstraint.activate([
+                separatorContainer.heightAnchor.constraint(equalToConstant: 20),
+                separator.leadingAnchor.constraint(equalTo: separatorContainer.leadingAnchor),
+                separator.trailingAnchor.constraint(equalTo: separatorContainer.trailingAnchor),
+                separator.centerYAnchor.constraint(equalTo: separatorContainer.centerYAnchor),
+                separatorContainer.widthAnchor.constraint(equalToConstant: 500)
+            ])
+
+            modalModeCheckbox = NSButton(checkboxWithTitle: "Enable Modal Mode", target: self, action: #selector(toggleModalMode(_:)))
+            modalModeCheckbox.translatesAutoresizingMaskIntoConstraints = false
+
+            let descriptionLabel = NSTextField(labelWithString: "Shortcuts are unbound until you press the activation shortcut")
+            descriptionLabel.font = NSFont.systemFont(ofSize: 11)
+            descriptionLabel.textColor = .secondaryLabelColor
+            descriptionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            modalModeShortcutView = MASShortcutView(frame: NSRect(x: 0, y: 0, width: 160, height: 19))
+            modalModeShortcutView.translatesAutoresizingMaskIntoConstraints = false
+
+            let shortcutLabel = NSTextField(labelWithString: "Activate")
+            shortcutLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            shortcutLabel.alignment = .right
+            shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            let shortcutRow = NSStackView()
+            shortcutRow.orientation = .horizontal
+            shortcutRow.alignment = .centerY
+            shortcutRow.spacing = 8
+            shortcutRow.translatesAutoresizingMaskIntoConstraints = false
+            shortcutRow.addArrangedSubview(shortcutLabel)
+            shortcutRow.addArrangedSubview(modalModeShortcutView)
+
+            NSLayoutConstraint.activate([
+                shortcutLabel.widthAnchor.constraint(equalToConstant: 94),
+                modalModeShortcutView.widthAnchor.constraint(equalToConstant: 160),
+                modalModeShortcutView.heightAnchor.constraint(equalToConstant: 19)
+            ])
+
+            // Grid size row
+            let gridColumnsLabel = NSTextField(labelWithString: "Grid columns")
+            gridColumnsLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            gridColumnsLabel.alignment = .right
+            gridColumnsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            gridColumnsField = NSTextField()
+            gridColumnsField.integerValue = Defaults.modalGridColumns.value
+            gridColumnsField.translatesAutoresizingMaskIntoConstraints = false
+            gridColumnsField.target = self
+            gridColumnsField.action = #selector(gridColumnsChanged(_:))
+
+            let colStepper = NSStepper()
+            colStepper.minValue = 2
+            colStepper.maxValue = 12
+            colStepper.integerValue = Defaults.modalGridColumns.value
+            colStepper.target = self
+            colStepper.action = #selector(gridColumnsStepperChanged(_:))
+            colStepper.translatesAutoresizingMaskIntoConstraints = false
+
+            let gridRowsLabel = NSTextField(labelWithString: "rows")
+            gridRowsLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            gridRowsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+            gridRowsField = NSTextField()
+            gridRowsField.integerValue = Defaults.modalGridRows.value
+            gridRowsField.translatesAutoresizingMaskIntoConstraints = false
+            gridRowsField.target = self
+            gridRowsField.action = #selector(gridRowsChanged(_:))
+
+            let rowStepper = NSStepper()
+            rowStepper.minValue = 2
+            rowStepper.maxValue = 8
+            rowStepper.integerValue = Defaults.modalGridRows.value
+            rowStepper.target = self
+            rowStepper.action = #selector(gridRowsStepperChanged(_:))
+            rowStepper.translatesAutoresizingMaskIntoConstraints = false
+
+            let gridSizeRow = NSStackView()
+            gridSizeRow.orientation = .horizontal
+            gridSizeRow.alignment = .centerY
+            gridSizeRow.spacing = 4
+            gridSizeRow.translatesAutoresizingMaskIntoConstraints = false
+            gridSizeRow.addArrangedSubview(gridColumnsLabel)
+            gridSizeRow.addArrangedSubview(gridColumnsField)
+            gridSizeRow.addArrangedSubview(colStepper)
+            gridSizeRow.setCustomSpacing(12, after: colStepper)
+            gridSizeRow.addArrangedSubview(gridRowsLabel)
+            gridSizeRow.addArrangedSubview(gridRowsField)
+            gridSizeRow.addArrangedSubview(rowStepper)
+
+            NSLayoutConstraint.activate([
+                gridColumnsLabel.widthAnchor.constraint(equalToConstant: 94),
+                gridColumnsField.widthAnchor.constraint(equalToConstant: 40),
+                gridRowsField.widthAnchor.constraint(equalToConstant: 40),
+            ])
+
+            modalModeView = NSStackView()
+            modalModeView.orientation = .vertical
+            modalModeView.alignment = .leading
+            modalModeView.spacing = 8
+            modalModeView.translatesAutoresizingMaskIntoConstraints = false
+            modalModeView.addArrangedSubview(shortcutRow)
+            modalModeView.addArrangedSubview(gridSizeRow)
+
+            modalModeViewHeightConstraint = modalModeView.heightAnchor.constraint(equalToConstant: 0)
+
+            if let stageIndex = parentStackView.arrangedSubviews.firstIndex(of: stageView) {
+                parentStackView.insertArrangedSubview(separatorContainer, at: stageIndex)
+                parentStackView.insertArrangedSubview(modalModeCheckbox, at: stageIndex + 1)
+                parentStackView.insertArrangedSubview(descriptionLabel, at: stageIndex + 2)
+                parentStackView.insertArrangedSubview(modalModeView, at: stageIndex + 3)
+            }
+        }
+
+        modalModeCheckbox.state = Defaults.modalMode.userEnabled ? .on : .off
+        ModalModeManager.initActivateShortcut()
+        modalModeShortcutView.setAssociatedUserDefaultsKey(ModalModeManager.activateDefaultsKey, withTransformerName: MASDictionaryTransformerName)
+        showHideModalModeSettings(animated: false)
+    }
+
+    private func showHideModalModeSettings(animated: Bool) {
+        guard modalModeView != nil else { return }
+        setVisibility(shown: Defaults.modalMode.userEnabled, ofView: modalModeView, withConstraint: modalModeViewHeightConstraint, animated: animated)
     }
     
     func initializeToggles() {

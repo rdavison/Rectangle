@@ -54,6 +54,7 @@
 		9824701122AF9B7E0037B409 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9824701022AF9B7E0037B409 /* Assets.xcassets */; };
 		9824701422AF9B7E0037B409 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 9824701222AF9B7E0037B409 /* Main.storyboard */; };
 		9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824701F22AF9B7E0037B409 /* RectangleTests.swift */; };
+		AB24702022AF9B7E0037B409 /* ProjectSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB24701F22AF9B7E0037B409 /* ProjectSelectorTests.swift */; };
 		9824702C22AFA22E0037B409 /* AccessibilityWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824702A22AFA22E0037B409 /* AccessibilityWindowController.swift */; };
 		9824702F22AFA2E50037B409 /* AccessibilityAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824702E22AFA2E50037B409 /* AccessibilityAuthorization.swift */; };
 		9824703122AFA8470037B409 /* RectangleStatusItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824703022AFA8470037B409 /* RectangleStatusItem.swift */; };
@@ -117,6 +118,19 @@
 		98D16A442592AD55005228CB /* MASShortcutMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D16A432592AD55005228CB /* MASShortcutMigration.swift */; };
 		98D16A492592B460005228CB /* NotificationExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D16A482592B460005228CB /* NotificationExtension.swift */; };
 		98D4B6C525B6256C009C7BF6 /* TodoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D4B6C425B6256C009C7BF6 /* TodoManager.swift */; };
+		CC0001012F090001009C7BF6 /* ModalModeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001032F090003009C7BF6 /* ModalModeManager.swift */; };
+		CC0001022F090002009C7BF6 /* ModalHUDWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001042F090004009C7BF6 /* ModalHUDWindow.swift */; };
+		CC0002012F090006009C7BF6 /* ModalGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0002032F090008009C7BF6 /* ModalGridView.swift */; };
+		CC0002022F090007009C7BF6 /* ProjectListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0002042F090009009C7BF6 /* ProjectListView.swift */; };
+		CC0002052F09000A009C7BF6 /* WindowProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0002072F09000C009C7BF6 /* WindowProject.swift */; };
+		CC0002092F09000E009C7BF6 /* WindowOverlayManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00020A2F09000F009C7BF6 /* WindowOverlayManager.swift */; };
+		CC0003012F090010009C7BF6 /* SelectorNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0003032F090012009C7BF6 /* SelectorNode.swift */; };
+		CC0003022F090011009C7BF6 /* WindowScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0003042F090013009C7BF6 /* WindowScreenshot.swift */; };
+		CC0004012F090014009C7BF6 /* AppSelectorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004032F090016009C7BF6 /* AppSelectorWindow.swift */; };
+		CC0004022F090015009C7BF6 /* WindowSelectorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004042F090017009C7BF6 /* WindowSelectorWindow.swift */; };
+		CC0004052F090018009C7BF6 /* GroupSelectorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004072F09001A009C7BF6 /* GroupSelectorWindow.swift */; };
+		CC0004062F090019009C7BF6 /* EditModeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004082F09001B009C7BF6 /* EditModeController.swift */; };
+		CC0004092F09001C009C7BF6 /* BoundingBoxWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00040A2F09001D009C7BF6 /* BoundingBoxWindow.swift */; };
 		98FA9497235A2D7600F95C4F /* RepeatedExecutionsCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FA9496235A2D7600F95C4F /* RepeatedExecutionsCalculation.swift */; };
 		98FD7C5F2687BC14009E9DAF /* FirstThreeFourthsCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FD7C5E2687BC14009E9DAF /* FirstThreeFourthsCalculation.swift */; };
 		98FD7C612687BCB6009E9DAF /* LastThreeFourthsCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FD7C602687BCB6009E9DAF /* LastThreeFourthsCalculation.swift */; };
@@ -239,6 +253,7 @@
 		9824701622AF9B7E0037B409 /* Rectangle.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Rectangle.entitlements; sourceTree = "<group>"; };
 		9824701B22AF9B7E0037B409 /* RectangleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RectangleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9824701F22AF9B7E0037B409 /* RectangleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RectangleTests.swift; sourceTree = "<group>"; };
+		AB24701F22AF9B7E0037B409 /* ProjectSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSelectorTests.swift; sourceTree = "<group>"; };
 		9824702122AF9B7E0037B409 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9824702A22AFA22E0037B409 /* AccessibilityWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AccessibilityWindowController.swift; sourceTree = "<group>"; };
 		9824702E22AFA2E50037B409 /* AccessibilityAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAuthorization.swift; sourceTree = "<group>"; };
@@ -301,6 +316,19 @@
 		98D16A432592AD55005228CB /* MASShortcutMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MASShortcutMigration.swift; sourceTree = "<group>"; };
 		98D16A482592B460005228CB /* NotificationExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationExtension.swift; sourceTree = "<group>"; };
 		98D4B6C425B6256C009C7BF6 /* TodoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoManager.swift; sourceTree = "<group>"; };
+		CC0001032F090003009C7BF6 /* ModalModeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalModeManager.swift; sourceTree = "<group>"; };
+		CC0001042F090004009C7BF6 /* ModalHUDWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalHUDWindow.swift; sourceTree = "<group>"; };
+		CC0002032F090008009C7BF6 /* ModalGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalGridView.swift; sourceTree = "<group>"; };
+		CC0002042F090009009C7BF6 /* ProjectListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectListView.swift; sourceTree = "<group>"; };
+		CC0002072F09000C009C7BF6 /* WindowProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowProject.swift; sourceTree = "<group>"; };
+		CC00020A2F09000F009C7BF6 /* WindowOverlayManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowOverlayManager.swift; sourceTree = "<group>"; };
+		CC0003032F090012009C7BF6 /* SelectorNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectorNode.swift; sourceTree = "<group>"; };
+		CC0003042F090013009C7BF6 /* WindowScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowScreenshot.swift; sourceTree = "<group>"; };
+		CC0004032F090016009C7BF6 /* AppSelectorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorWindow.swift; sourceTree = "<group>"; };
+		CC0004042F090017009C7BF6 /* WindowSelectorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSelectorWindow.swift; sourceTree = "<group>"; };
+		CC0004072F09001A009C7BF6 /* GroupSelectorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSelectorWindow.swift; sourceTree = "<group>"; };
+		CC0004082F09001B009C7BF6 /* EditModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditModeController.swift; sourceTree = "<group>"; };
+		CC00040A2F09001D009C7BF6 /* BoundingBoxWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundingBoxWindow.swift; sourceTree = "<group>"; };
 		98FA9496235A2D7600F95C4F /* RepeatedExecutionsCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepeatedExecutionsCalculation.swift; sourceTree = "<group>"; };
 		98FD7C5E2687BC14009E9DAF /* FirstThreeFourthsCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstThreeFourthsCalculation.swift; sourceTree = "<group>"; };
 		98FD7C602687BCB6009E9DAF /* LastThreeFourthsCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LastThreeFourthsCalculation.swift; sourceTree = "<group>"; };
@@ -594,6 +622,7 @@
 				989DA30C243FC0C3008C7AA4 /* WelcomeWindow */,
 				98C2755F231FF6AE009B9292 /* Snapping */,
 				98D4B6C925B625B6009C7BF6 /* TodoMode */,
+				CC0001052F090005009C7BF6 /* ModalMode */,
 				985B9BFA22BE218C00A2E8F0 /* Popover */,
 				982140EA22B7DB0400ABFB3F /* WindowMover */,
 				982140E922B7DA3100ABFB3F /* WindowCalculation */,
@@ -608,6 +637,7 @@
 			isa = PBXGroup;
 			children = (
 				9824701F22AF9B7E0037B409 /* RectangleTests.swift */,
+				AB24701F22AF9B7E0037B409 /* ProjectSelectorTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
 			path = RectangleTests;
@@ -667,6 +697,26 @@
 				98D4B6C425B6256C009C7BF6 /* TodoManager.swift */,
 			);
 			path = TodoMode;
+			sourceTree = "<group>";
+		};
+		CC0001052F090005009C7BF6 /* ModalMode */ = {
+			isa = PBXGroup;
+			children = (
+				CC0001032F090003009C7BF6 /* ModalModeManager.swift */,
+				CC0001042F090004009C7BF6 /* ModalHUDWindow.swift */,
+				CC0002032F090008009C7BF6 /* ModalGridView.swift */,
+				CC0002042F090009009C7BF6 /* ProjectListView.swift */,
+				CC0002072F09000C009C7BF6 /* WindowProject.swift */,
+				CC00020A2F09000F009C7BF6 /* WindowOverlayManager.swift */,
+				CC0003032F090012009C7BF6 /* SelectorNode.swift */,
+				CC0003042F090013009C7BF6 /* WindowScreenshot.swift */,
+				CC0004032F090016009C7BF6 /* AppSelectorWindow.swift */,
+				CC0004042F090017009C7BF6 /* WindowSelectorWindow.swift */,
+				CC0004072F09001A009C7BF6 /* GroupSelectorWindow.swift */,
+				CC0004082F09001B009C7BF6 /* EditModeController.swift */,
+				CC00040A2F09001D009C7BF6 /* BoundingBoxWindow.swift */,
+			);
+			path = ModalMode;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -967,6 +1017,19 @@
 				98A009AD2512498000CFBF0C /* FirstFourthCalculation.swift in Sources */,
 				AA4DA2FB28FDC94A00355CEB /* DispatchTimeExtension.swift in Sources */,
 				98D4B6C525B6256C009C7BF6 /* TodoManager.swift in Sources */,
+				CC0001012F090001009C7BF6 /* ModalModeManager.swift in Sources */,
+				CC0001022F090002009C7BF6 /* ModalHUDWindow.swift in Sources */,
+				CC0002012F090006009C7BF6 /* ModalGridView.swift in Sources */,
+				CC0002022F090007009C7BF6 /* ProjectListView.swift in Sources */,
+				CC0002052F09000A009C7BF6 /* WindowProject.swift in Sources */,
+				CC0002092F09000E009C7BF6 /* WindowOverlayManager.swift in Sources */,
+				CC0003012F090010009C7BF6 /* SelectorNode.swift in Sources */,
+				CC0003022F090011009C7BF6 /* WindowScreenshot.swift in Sources */,
+				CC0004012F090014009C7BF6 /* AppSelectorWindow.swift in Sources */,
+				CC0004022F090015009C7BF6 /* WindowSelectorWindow.swift in Sources */,
+				CC0004052F090018009C7BF6 /* GroupSelectorWindow.swift in Sources */,
+				CC0004062F090019009C7BF6 /* EditModeController.swift in Sources */,
+				CC0004092F09001C009C7BF6 /* BoundingBoxWindow.swift in Sources */,
 				B4780A322BD4C75900732B9E /* HalfOrDoubleDimensionCalculation.swift in Sources */,
 				AA69F83C29909A95001A81AF /* RightTodoCalculation.swift in Sources */,
 				AA49DD1129B8C1B100690E13 /* TitleBarManager.swift in Sources */,
@@ -1010,6 +1073,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */,
+				AB24702022AF9B7E0037B409 /* ProjectSelectorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

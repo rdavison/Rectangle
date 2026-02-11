@@ -57,16 +57,21 @@ class ApplicationToggle: NSObject {
         if !Self.shortcutsDisabled {
             Self.shortcutsDisabled = true
             self.shortcutManager.unbindShortcuts()
+            if ModalModeManager.shared.state == .active {
+                ModalModeManager.shared.deactivate()
+            }
             if !Defaults.ignoreDragSnapToo.userDisabled {
                 Notification.Name.windowSnapping.post(object: false)
             }
         }
     }
-    
+
     private func enableShortcuts() {
         if Self.shortcutsDisabled {
             Self.shortcutsDisabled = false
-            self.shortcutManager.bindShortcuts()
+            if !Defaults.modalMode.userEnabled {
+                self.shortcutManager.bindShortcuts()
+            }
             if !Defaults.ignoreDragSnapToo.userDisabled {
                 Notification.Name.windowSnapping.post(object: true)
             }

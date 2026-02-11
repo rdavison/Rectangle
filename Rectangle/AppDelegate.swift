@@ -64,7 +64,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.statusItem.statusMenu = self.mainStatusMenu
             self.accessibilityTrusted()
         }
-        
+
         if alreadyTrusted {
             accessibilityTrusted()
         }
@@ -86,6 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.applicationToggle.reloadFromDefaults()
             self.shortcutManager.reloadFromDefaults()
             self.snappingManager.reloadFromDefaults()
+            ModalModeManager.shared.reloadFromDefaults()
             self.initializeTodo(false)
         })
         
@@ -137,6 +138,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.snappingManager = SnappingManager()
         self.titleBarManager = TitleBarManager()
         self.initializeTodo()
+        ModalModeManager.shared.configure(shortcutManager: shortcutManager)
+        if Defaults.modalMode.userEnabled {
+            ModalModeManager.initActivateShortcut()
+            ModalModeManager.registerActivateShortcut()
+            ModalModeManager.shared.startEventTap()
+        }
         checkForProblematicApps()
         MacTilingDefaults.checkForBuiltInTiling(skipIfAlreadyNotified: true)
     }

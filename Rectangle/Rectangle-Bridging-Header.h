@@ -5,3 +5,7 @@
 #import <AppKit/AppKit.h>
 
 AXError _AXUIElementGetWindow(AXUIElementRef element, uint32_t *identifier);
+
+// Private CoreGraphics SPI for disabling system symbolic hot keys (e.g. Cmd+Tab app switcher)
+// Signature: (hotKeyID, isEnabled) — no connection ID needed
+extern CGError CGSSetSymbolicHotKeyEnabled(int hotKey, _Bool enabled);

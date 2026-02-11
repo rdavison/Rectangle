@@ -22,6 +22,9 @@ extension Notification.Name {
     static let windowTitleBar = Notification.Name("windowTitleBar")
     static let defaultSnapAreas = Notification.Name("defaultSnapAreas")
     static let updateAvailability = Notification.Name("updateAvailability")
+    static let windowActionExecuted = Notification.Name("windowActionExecuted")
+    static let modalModeActivated = Notification.Name("modalModeActivated")
+    static let modalModeDeactivated = Notification.Name("modalModeDeactivated")
 
     func post(
         center: NotificationCenter = NotificationCenter.default,

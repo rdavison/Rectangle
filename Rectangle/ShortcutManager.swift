@@ -20,8 +20,10 @@ class ShortcutManager {
         
         registerDefaults()
 
-        bindShortcuts()
-        
+        if !Defaults.modalMode.userEnabled {
+            bindShortcuts()
+        }
+
         subscribeAll(selector: #selector(windowActionTriggered))
         
         Notification.Name.changeDefaults.onPost { _ in self.registerDefaults() }
@@ -31,7 +33,9 @@ class ShortcutManager {
         unsubscribe()
         unbindShortcuts()
         registerDefaults()
-        bindShortcuts()
+        if !Defaults.modalMode.userEnabled {
+            bindShortcuts()
+        }
         subscribeAll(selector: #selector(windowActionTriggered))
     }
     
@@ -102,6 +106,7 @@ class ShortcutManager {
         }
         
         windowManager.execute(parameters)
+        Notification.Name.windowActionExecuted.post(object: parameters.source)
     }
     
     private func isRepeatAction(parameters: ExecutionParameters, windowElement: AccessibilityElement, windowId: CGWindowID) -> Bool {
