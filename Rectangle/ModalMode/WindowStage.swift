@@ -158,9 +158,14 @@ class WindowStage {
 
     // MARK: - Transition Between Modes
 
-    func transitionTo(_ newLayout: Layout, animated: Bool) {
+    func transitionTo(_ newLayout: Layout, animated: Bool, frontIndex: Int? = nil) {
         guard !slots.isEmpty else { return }
         let oldLayout = layout
+
+        // Update front slot if caller specified one
+        if let idx = frontIndex, idx >= 0, idx < slots.count {
+            frontSlotIndex = idx
+        }
 
         // If moving to carousel, compute geometry first
         if newLayout == .carousel {

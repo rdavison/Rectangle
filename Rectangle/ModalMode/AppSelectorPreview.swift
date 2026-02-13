@@ -40,8 +40,8 @@ extension AppSelectorWindow {
                     stage.cycle(direction: direction)
                 }
             } else {
-                // Transition from backdrop layout to carousel
-                stage.transitionTo(.carousel, animated: true)
+                // Transition from backdrop layout to carousel with target window at front
+                stage.transitionTo(.carousel, animated: true, frontIndex: index)
             }
         }
 
