@@ -119,8 +119,7 @@ class WindowCarousel {
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = 10
         imageView.layer?.masksToBounds = true
-        imageView.layer?.borderWidth = 1
-        imageView.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+        imageView.layer?.borderWidth = 0
         imageView.autoresizingMask = [.width, .height]
 
         let container = NSView(frame: contentFrame)
