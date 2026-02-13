@@ -41,13 +41,7 @@ class WindowCarousel {
         let windowInfo: WindowInfo
         var cachedImage: NSImage?
         var angle: CGFloat        // current angle on the ellipse (0 = front, π = back)
-    }
-
-    /// Computed pose for a slot at a given angle.
-    struct Pose {
-        let frame: NSRect
-        let alpha: CGFloat
-        let isFront: Bool
+        var wasFront: Bool = false // previous frame's front/back state (for z-order change detection)
     }
 
     static let frontLevel = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
@@ -57,7 +51,15 @@ class WindowCarousel {
     private let maxPanels = 7
     private var panels: [NSPanel] = []
     private var config: Config
-    private var animationTimer: Timer?
+    private var displayLink: CVDisplayLink?
+
+    // Animation state — set when an animation is active
+    private var animStartTime: CFTimeInterval = 0
+    private var animDuration: TimeInterval = 0
+    private var animStartAngles: [CGFloat] = []
+    private var animDeltaPerSlot: [CGFloat] = []  // per-slot delta (same for cycle, per-slot for entry)
+    private var animCompletion: (() -> Void)?
+    private var animRunning = false
 
     /// Index of the slot currently at the front (θ closest to 0).
     private(set) var frontSlotIndex: Int = 0
@@ -72,59 +74,55 @@ class WindowCarousel {
     var windowCount: Int { slots.count }
 
     /// Whether an animation is currently running.
-    var isAnimating: Bool { animationTimer != nil }
+    var isAnimating: Bool { animRunning }
 
     init(config: Config) {
         self.config = config
     }
 
-    // MARK: - Pose Computation
+    deinit {
+        stopDisplayLink()
+    }
 
-    /// Compute the carousel pose for angle θ on the elliptical orbit.
-    /// The ellipse shape is fixed — direction only affects which way angles rotate.
-    static func computePose(theta: CGFloat, config: Config) -> Pose {
+    // MARK: - Pose Computation (inlined for hot path)
+
+    /// Compute frame and isFront for a given angle. Minimal work — no allocations.
+    private func computeFrame(theta: CGFloat) -> (frame: NSRect, isFront: Bool) {
         let cosθ = cos(theta)
         let sinθ = sin(theta)
         let cx = config.centerX + config.aRadius * sinθ
         let cy = config.centerY + config.bRadius * cosθ
-        let scale = (1 + cosθ) / 2 * (1 - config.backScale) + config.backScale
+        let scaleFactor = config.backScale
+        let scale = (1 + cosθ) * 0.5 * (1 - scaleFactor) + scaleFactor
         let w = config.baseW * scale
         let h = config.baseH * scale
-        let alpha: CGFloat = 1.0
-        let isFront = cosθ > 0
-        return Pose(
-            frame: NSRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h),
-            alpha: alpha,
-            isFront: isFront
-        )
+        return (NSRect(x: cx - w * 0.5, y: cy - h * 0.5, width: w, height: h), cosθ > 0)
     }
 
     // MARK: - Panel Factory
 
-    private func makePanel() -> NSPanel {
+    private func makePanel(image: NSImage?) -> NSPanel {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
                             styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered, defer: false)
+                            backing: .buffered, defer: true)
         panel.isOpaque = false
         panel.level = Self.backLevel
-        panel.hasShadow = true
+        panel.hasShadow = false          // shadows are expensive during animation
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.transient, .canJoinAllSpaces]
 
-        let contentFrame = NSRect(origin: .zero, size: panel.frame.size)
-        let imageView = NSImageView(frame: contentFrame)
+        let imageView = NSImageView()
+        imageView.image = image
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = 10
         imageView.layer?.masksToBounds = true
-        imageView.layer?.borderWidth = 0
         imageView.autoresizingMask = [.width, .height]
 
-        let container = NSView(frame: contentFrame)
+        let container = NSView()
         container.wantsLayer = true
-        container.shadow = NSShadow()
         container.layer?.shadowColor = NSColor.black.cgColor
         container.layer?.shadowOpacity = 0.5
         container.layer?.shadowRadius = 20
@@ -136,45 +134,58 @@ class WindowCarousel {
         return panel
     }
 
-    // MARK: - Setup
+    // MARK: - CVDisplayLink
 
-    /// Create panels and distribute windows around the ellipse.
-    /// `initialFrontIndex` is the index into `windows` that should start at the front (θ=0).
-    func setUp(windows: [WindowInfo], initialFrontIndex: Int,
-               cache: [CGWindowID: CGImage], config: Config) {
-        self.config = config
-        tearDownImmediate()
+    private func startDisplayLink() {
+        guard displayLink == nil else { return }
+        var link: CVDisplayLink?
+        CVDisplayLinkCreateWithActiveCGDisplays(&link)
+        guard let link = link else { return }
 
-        guard !windows.isEmpty else { return }
-
-        let n = windows.count
-        let angleStep = 2 * CGFloat.pi / CGFloat(n)
-
-        // Build slots. The initialFrontIndex window gets θ=0, others are evenly spaced clockwise.
-        slots = windows.enumerated().map { (i, win) in
-            let offsetFromFront = (i - initialFrontIndex + n) % n
-            let angle = CGFloat(offsetFromFront) * angleStep
-            let nsImage: NSImage?
-            if let cached = cache[win.id] {
-                nsImage = NSImage(cgImage: cached, size: NSSize(width: CGFloat(cached.width), height: CGFloat(cached.height)))
-            } else {
-                nsImage = nil
-            }
-            return Slot(windowInfo: win, cachedImage: nsImage, angle: angle)
-        }
-        frontSlotIndex = initialFrontIndex
-
-        // Create panel pool (up to maxPanels)
-        let panelCount = min(n, maxPanels)
-        panels = (0..<panelCount).map { _ in makePanel() }
-
-        // Apply initial poses
-        assignPanels()
-        for panel in panels {
-            panel.orderFront(nil)
-        }
-        logSlotState("setUp")
+        let selfPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, userInfo) -> CVReturn in
+            let carousel = Unmanaged<WindowCarousel>.fromOpaque(userInfo!).takeUnretainedValue()
+            DispatchQueue.main.async { carousel.displayLinkTick() }
+            return kCVReturnSuccess
+        }, selfPtr)
+        CVDisplayLinkStart(link)
+        displayLink = link
     }
+
+    private func stopDisplayLink() {
+        guard let link = displayLink else { return }
+        CVDisplayLinkStop(link)
+        displayLink = nil
+    }
+
+    private func displayLinkTick() {
+        guard animRunning else { return }
+
+        let elapsed = CACurrentMediaTime() - animStartTime
+        let raw = min(CGFloat(elapsed / animDuration), 1.0)
+        // Ease in-out (quadratic)
+        let t = raw < 0.5 ? 2 * raw * raw : 1 - pow(-2 * raw + 2, 2) / 2
+
+        for i in slots.indices {
+            slots[i].angle = animStartAngles[i] + animDeltaPerSlot[i] * t
+        }
+        updatePanelPoses()
+
+        if raw >= 1.0 {
+            animRunning = false
+            stopDisplayLink()
+            normalizeAngles()
+            updateFrontSlotIndex()
+            updatePanelPoses()
+            // Re-enable shadows now that animation is done
+            for panel in panels { panel.hasShadow = true }
+            animCompletion?()
+            animCompletion = nil
+            logSlotState("animation end")
+        }
+    }
+
+    // MARK: - Setup
 
     /// Set up with an entry animation: all windows start at back (θ=π), and the
     /// target window animates to front over duration.
@@ -200,44 +211,25 @@ class WindowCarousel {
                 nsImage = nil
             }
             // Start at back: offset by π
-            return Slot(windowInfo: win, cachedImage: nsImage, angle: finalAngle + .pi)
+            return Slot(windowInfo: win, cachedImage: nsImage, angle: finalAngle + .pi, wasFront: false)
         }
         frontSlotIndex = initialFrontIndex
 
         let panelCount = min(n, maxPanels)
-        panels = (0..<panelCount).map { _ in makePanel() }
+        panels = (0..<panelCount).map { i in makePanel(image: slots[i].cachedImage) }
 
-        assignPanels()
-        for panel in panels {
-            panel.orderFront(nil)
-        }
+        updatePanelPoses()
+        for panel in panels { panel.orderFront(nil) }
         logSlotState("setUpWithEntryAnimation (start)")
 
-        // Animate from current angles (offset by π) to final angles (subtract π from all)
-        let startTime = CACurrentMediaTime()
-        let startAngles = slots.map { $0.angle }
-
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 120.0, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-
-            let elapsed = CACurrentMediaTime() - startTime
-            let raw = min(CGFloat(elapsed / duration), 1.0)
-            let t = raw < 0.5 ? 2 * raw * raw : 1 - pow(-2 * raw + 2, 2) / 2
-
-            // Interpolate: each angle moves from startAngle to startAngle - π
-            for i in self.slots.indices {
-                self.slots[i].angle = startAngles[i] - .pi * t
-            }
-            self.assignPanels()
-
-            if raw >= 1.0 {
-                timer.invalidate()
-                self.animationTimer = nil
-                self.normalizeAngles()
-                self.assignPanels()
-                self.logSlotState("setUpWithEntryAnimation (end)")
-            }
-        }
+        // Animate: each slot moves by -π (from back to final position)
+        animStartTime = CACurrentMediaTime()
+        animDuration = duration
+        animStartAngles = slots.map { $0.angle }
+        animDeltaPerSlot = Array(repeating: -.pi, count: slots.count)
+        animCompletion = nil
+        animRunning = true
+        startDisplayLink()
     }
 
     // MARK: - Cycling
@@ -247,45 +239,28 @@ class WindowCarousel {
         guard slots.count > 1 else { return }
 
         // Cancel any in-progress animation, snap to current interpolated positions
-        if let timer = animationTimer {
-            timer.invalidate()
-            animationTimer = nil
+        if animRunning {
+            animRunning = false
+            stopDisplayLink()
             normalizeAngles()
         }
 
         let n = slots.count
         let angleStep = 2 * CGFloat.pi / CGFloat(n)
-        // Negate: direction=1 (forward) subtracts from angles, bringing the next
-        // slot (higher index) to θ=0.
         let delta = -direction * angleStep
 
-        let startTime = CACurrentMediaTime()
-        let startAngles = slots.map { $0.angle }
+        // Disable shadows during animation for performance
+        for panel in panels { panel.hasShadow = false }
 
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 120.0, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-
-            let elapsed = CACurrentMediaTime() - startTime
-            let raw = min(CGFloat(elapsed / duration), 1.0)
-            let t = raw < 0.5 ? 2 * raw * raw : 1 - pow(-2 * raw + 2, 2) / 2
-
-            for i in self.slots.indices {
-                self.slots[i].angle = startAngles[i] + delta * t
-            }
-            self.assignPanels()
-
-            if raw >= 1.0 {
-                timer.invalidate()
-                self.animationTimer = nil
-                self.normalizeAngles()
-                self.updateFrontSlotIndex()
-                self.assignPanels()
-                self.logSlotState("cycle (end, dir=\(direction))")
-            }
-        }
+        animStartTime = CACurrentMediaTime()
+        animDuration = duration
+        animStartAngles = slots.map { $0.angle }
+        animDeltaPerSlot = Array(repeating: delta, count: slots.count)
+        animCompletion = nil
+        animRunning = true
+        startDisplayLink()
 
         // Eagerly update front slot index for callers.
-        // direction=1 (forward) brings the next slot to front.
         let nextFront: Int
         if direction > 0 {
             nextFront = (frontSlotIndex + 1) % n
@@ -299,8 +274,8 @@ class WindowCarousel {
 
     /// Fade out all panels and clean up.
     func tearDown(animated: Bool) {
-        animationTimer?.invalidate()
-        animationTimer = nil
+        animRunning = false
+        stopDisplayLink()
 
         if animated {
             let panelsToRemove = panels
@@ -327,8 +302,8 @@ class WindowCarousel {
 
     /// Immediate cleanup with no animation.
     private func tearDownImmediate() {
-        animationTimer?.invalidate()
-        animationTimer = nil
+        animRunning = false
+        stopDisplayLink()
         for panel in panels {
             panel.orderOut(nil)
         }
@@ -341,15 +316,14 @@ class WindowCarousel {
 
     /// Animate the front panel to the window's real screen position, fade others out.
     func flyOutFront(to targetRect: NSRect, completion: @escaping () -> Void) {
-        animationTimer?.invalidate()
-        animationTimer = nil
+        animRunning = false
+        stopDisplayLink()
 
         guard !panels.isEmpty else {
             completion()
             return
         }
 
-        // Find the panel currently at the front (lowest absolute angle)
         let frontPanel = findFrontPanel()
         let otherPanels = panels.filter { $0 !== frontPanel }
 
@@ -379,54 +353,99 @@ class WindowCarousel {
         guard !slots.isEmpty else { return }
         slots[frontSlotIndex].cachedImage = image
 
-        // Find the panel showing the front slot and update it
-        if let panel = findFrontPanel(),
-           let imageView = panel.contentView?.subviews.first as? NSImageView {
+        if frontSlotIndex < panels.count,
+           let imageView = panels[frontSlotIndex].contentView?.subviews.first as? NSImageView {
             imageView.image = image
         }
     }
 
-    /// Update the cached image for a specific window ID.
+    /// Update the cached image for a specific window ID. Also pushes to panel if visible.
     func updateImage(_ image: NSImage, forWindowID windowID: CGWindowID) {
-        guard let slotIndex = slots.firstIndex(where: { $0.windowInfo.id == windowID }) else { return }
-        slots[slotIndex].cachedImage = image
-        // Panel assignment will pick it up on next frame or assignPanels call
+        guard let i = slots.firstIndex(where: { $0.windowInfo.id == windowID }) else { return }
+        slots[i].cachedImage = image
+        if i < panels.count,
+           let imageView = panels[i].contentView?.subviews.first as? NSImageView {
+            imageView.image = image
+        }
     }
 
-    // MARK: - Panel Assignment
+    // MARK: - Panel Pose Update (HOT PATH)
 
-    /// Update each panel's pose from its fixed slot (slot[i] → panel[i]),
-    /// then re-stack panels back-to-front for correct z-ordering.
-    private func assignPanels() {
-        guard !slots.isEmpty, !panels.isEmpty else { return }
+    /// Update each panel's frame and z-level. Images are NOT touched here —
+    /// they are set only during setup and explicit updateImage calls.
+    private func updatePanelPoses() {
+        let n = panels.count
+        guard n > 0 else { return }
 
-        // Fixed 1:1 mapping: panel[i] always shows slot[i].
-        // Extra slots beyond maxPanels have no panel (hidden).
-        for i in 0..<panels.count {
-            let slot = slots[i]
-            let pose = Self.computePose(theta: slot.angle, config: config)
+        var zOrderChanged = false
+
+        for i in 0..<n {
+            let (frame, isFront) = computeFrame(theta: slots[i].angle)
             let panel = panels[i]
 
-            panel.setFrame(pose.frame, display: true)
-            panel.alphaValue = pose.alpha
-            panel.level = pose.isFront ? Self.frontLevel : Self.backLevel
+            panel.setFrame(frame, display: false)
+            panel.level = isFront ? Self.frontLevel : Self.backLevel
 
-            if let imageView = panel.contentView?.subviews.first as? NSImageView {
-                imageView.image = slot.cachedImage
+            if slots[i].wasFront != isFront {
+                slots[i].wasFront = isFront
+                zOrderChanged = true
             }
         }
 
-        // Re-stack panels back-to-front: sort by angular distance (farthest first),
-        // then order each above the previous so the front panel is on top.
-        let byDepth = (0..<panels.count).sorted {
-            angularDistanceFromFront(slots[$0].angle) > angularDistanceFromFront(slots[$1].angle)
-        }
-        for j in 1..<byDepth.count {
-            panels[byDepth[j]].order(.above, relativeTo: panels[byDepth[j - 1]].windowNumber)
+        // Only re-stack when a panel crosses the front/back boundary
+        if zOrderChanged {
+            let byDepth = (0..<n).sorted {
+                angularDistFromFront(slots[$0].angle) > angularDistFromFront(slots[$1].angle)
+            }
+            for j in 1..<byDepth.count {
+                panels[byDepth[j]].order(.above, relativeTo: panels[byDepth[j - 1]].windowNumber)
+            }
         }
     }
 
-    /// Log current slot and panel state for debugging.
+    /// Find the panel currently showing the front slot.
+    private func findFrontPanel() -> NSPanel? {
+        guard frontSlotIndex < panels.count else { return nil }
+        return panels[frontSlotIndex]
+    }
+
+    // MARK: - Angle Helpers
+
+    /// Normalize all angles to [0, 2π).
+    private func normalizeAngles() {
+        let twoPi = 2 * CGFloat.pi
+        for i in slots.indices {
+            var a = slots[i].angle.truncatingRemainder(dividingBy: twoPi)
+            if a < 0 { a += twoPi }
+            slots[i].angle = a
+        }
+    }
+
+    /// Update frontSlotIndex to the slot nearest θ=0.
+    private func updateFrontSlotIndex() {
+        guard !slots.isEmpty else { return }
+        var bestIndex = 0
+        var bestDist = angularDistFromFront(slots[0].angle)
+        for i in 1..<slots.count {
+            let dist = angularDistFromFront(slots[i].angle)
+            if dist < bestDist {
+                bestDist = dist
+                bestIndex = i
+            }
+        }
+        frontSlotIndex = bestIndex
+    }
+
+    /// Angular distance from the front position (θ=0), in [0, π].
+    private func angularDistFromFront(_ angle: CGFloat) -> CGFloat {
+        let twoPi = 2 * CGFloat.pi
+        var d = angle.truncatingRemainder(dividingBy: twoPi)
+        if d < 0 { d += twoPi }
+        return d > .pi ? twoPi - d : d
+    }
+
+    // MARK: - Debug Logging
+
     private func logSlotState(_ label: String) {
         var lines: [String] = ["[carousel] \(label): \(slots.count) slots, \(panels.count) panels, frontSlot=\(frontSlotIndex)"]
         for (i, slot) in slots.enumerated() {
@@ -441,44 +460,5 @@ class WindowCarousel {
             lines.append("  panel[\(i)] frame=(\(Int(f.origin.x)),\(Int(f.origin.y)) \(Int(f.width))x\(Int(f.height))) alpha=\(String(format: "%.2f", panel.alphaValue)) level=\(panel.level == Self.frontLevel ? "FRONT" : panel.level == Self.backLevel ? "back" : "other(\(panel.level.rawValue))")")
         }
         carouselLog(lines.joined(separator: "\n"))
-    }
-
-    /// Find the panel currently showing the front slot.
-    private func findFrontPanel() -> NSPanel? {
-        guard frontSlotIndex < panels.count else { return nil }
-        return panels[frontSlotIndex]
-    }
-
-    // MARK: - Angle Helpers
-
-    /// Normalize all angles to [0, 2π).
-    private func normalizeAngles() {
-        for i in slots.indices {
-            var a = slots[i].angle.truncatingRemainder(dividingBy: 2 * .pi)
-            if a < 0 { a += 2 * .pi }
-            slots[i].angle = a
-        }
-    }
-
-    /// Update frontSlotIndex to the slot nearest θ=0.
-    private func updateFrontSlotIndex() {
-        guard !slots.isEmpty else { return }
-        var bestIndex = 0
-        var bestDist = angularDistanceFromFront(slots[0].angle)
-        for i in 1..<slots.count {
-            let dist = angularDistanceFromFront(slots[i].angle)
-            if dist < bestDist {
-                bestDist = dist
-                bestIndex = i
-            }
-        }
-        frontSlotIndex = bestIndex
-    }
-
-    /// Angular distance from the front position (θ=0), in [0, π].
-    private func angularDistanceFromFront(_ angle: CGFloat) -> CGFloat {
-        var d = angle.truncatingRemainder(dividingBy: 2 * .pi)
-        if d < 0 { d += 2 * .pi }
-        return d > .pi ? 2 * .pi - d : d
     }
 }

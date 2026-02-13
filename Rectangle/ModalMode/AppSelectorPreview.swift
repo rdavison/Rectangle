@@ -85,27 +85,26 @@ extension AppSelectorWindow {
             selectorPanel?.orderFront(nil)
         }
 
-        // Capture full-res async for the front window, then start live refresh
+        // Capture full-res async for the front window, then start live refresh.
+        // Cap at the actual preview panel size (retina 2x) — no need for full screen resolution.
         previewRefreshTimer?.invalidate()
         let windowID = galleryWindows[index].id
-        let previewMaxSize = CGSize(width: screen.frame.width * 2, height: screen.frame.height * 2)
+        let captureSize = CGSize(width: previewW * 2, height: previewH * 2)
         let gen = selectionGeneration
 
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            let t = CFAbsoluteTimeGetCurrent()
-            guard let nsImg = WindowScreenshot.capture(windowID: windowID, maxSize: previewMaxSize) else { return }
-            let capMs = (CFAbsoluteTimeGetCurrent() - t) * 1000
+            guard let nsImg = WindowScreenshot.capture(windowID: windowID, maxSize: captureSize) else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, self.selectionGeneration == gen, self.isPreviewingWindow else { return }
-                perfLog("[perf] preview capture wid:\(windowID) \(String(format: "%.1f", capMs))ms (full-res, async)")
                 self.windowCarousel?.updateFrontImage(nsImg)
 
-                // Now start live refresh
-                self.previewRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                    guard let self = self, self.isPreviewingWindow else { return }
+                // Live refresh at 200ms — only the front window, only when not animating
+                self.previewRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+                    guard let self = self, self.isPreviewingWindow,
+                          !(self.windowCarousel?.isAnimating ?? false) else { return }
                     let frontWID = self.windowCarousel?.frontWindow?.id ?? windowID
                     DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-                        guard let nsImg = WindowScreenshot.capture(windowID: frontWID, maxSize: previewMaxSize) else { return }
+                        guard let nsImg = WindowScreenshot.capture(windowID: frontWID, maxSize: captureSize) else { return }
                         DispatchQueue.main.async { [weak self] in
                             self?.windowCarousel?.updateFrontImage(nsImg)
                         }
