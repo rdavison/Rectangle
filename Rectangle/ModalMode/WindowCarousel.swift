@@ -86,8 +86,8 @@ class WindowCarousel {
 
     // MARK: - Pose Computation (inlined for hot path)
 
-    /// Compute frame and isFront for a given angle. Minimal work — no allocations.
-    private func computeFrame(theta: CGFloat) -> (frame: NSRect, isFront: Bool) {
+    /// Compute frame, isFront, and crossover alpha for a given angle. Minimal work — no allocations.
+    private func computeFrame(theta: CGFloat) -> (frame: NSRect, isFront: Bool, alpha: CGFloat) {
         let cosθ = cos(theta)
         let sinθ = sin(theta)
         let cx = config.centerX + config.aRadius * sinθ
@@ -96,7 +96,10 @@ class WindowCarousel {
         let scale = (1 + cosθ) * 0.5 * (1 - scaleFactor) + scaleFactor
         let w = config.baseW * scale
         let h = config.baseH * scale
-        return (NSRect(x: cx - w * 0.5, y: cy - h * 0.5, width: w, height: h), cosθ > 0)
+        // Fade alpha to 0 near the z-crossover (cos(θ)=0) so the level switch is invisible
+        let crossoverWidth: CGFloat = 0.3
+        let alpha = min(1.0, abs(cosθ) / crossoverWidth)
+        return (NSRect(x: cx - w * 0.5, y: cy - h * 0.5, width: w, height: h), cosθ > 0, alpha)
     }
 
     // MARK: - Panel Factory
@@ -380,10 +383,11 @@ class WindowCarousel {
         var zOrderChanged = false
 
         for i in 0..<n {
-            let (frame, isFront) = computeFrame(theta: slots[i].angle)
+            let (frame, isFront, alpha) = computeFrame(theta: slots[i].angle)
             let panel = panels[i]
 
             panel.setFrame(frame, display: false)
+            panel.alphaValue = alpha
             panel.level = isFront ? Self.frontLevel : Self.backLevel
 
             if slots[i].wasFront != isFront {
