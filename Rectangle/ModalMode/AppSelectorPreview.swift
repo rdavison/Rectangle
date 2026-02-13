@@ -58,6 +58,7 @@ extension AppSelectorWindow {
 
         if let carousel = windowCarousel {
             // Carousel already exists — cycle it
+            carouselLog("[carousel] cycle direction=\(direction) frontSlot=\(carousel.frontSlotIndex) windowCount=\(carousel.windowCount)")
             if direction != 0 {
                 carousel.cycle(direction: direction)
             }
@@ -66,13 +67,12 @@ extension AppSelectorWindow {
             let carousel = WindowCarousel(config: config)
             windowCarousel = carousel
 
-            // Hide backdrop panel (fade out)
-            if let backdrop = backdropPanel {
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.2
-                    backdrop.animator().alphaValue = 0
-                }
-            }
+            let windowIDs = galleryWindows.map { "wid:\($0.id)" }
+            carouselLog("[carousel] setUp \(galleryWindows.count) windows [\(windowIDs.joined(separator: ", "))] initialFront=\(index) config=(cx=\(Int(config.centerX)) cy=\(Int(config.centerY)) base=\(Int(config.baseW))x\(Int(config.baseH)))")
+
+            // Hide backdrop panel — orderOut is required because
+            // NSVisualEffectView ignores alphaValue animation
+            backdropPanel?.orderOut(nil)
 
             carousel.setUpWithEntryAnimation(
                 windows: galleryWindows,
@@ -124,12 +124,11 @@ extension AppSelectorWindow {
         windowCarousel?.tearDown(animated: true)
         windowCarousel = nil
 
-        // Restore backdrop panel (fade in)
+        // Restore backdrop panel
         if let backdrop = backdropPanel {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                backdrop.animator().alphaValue = 1.0
-            }
+            backdrop.alphaValue = 1.0
+            backdrop.orderFront(nil)
+            selectorPanel?.orderFront(nil)  // Keep HUD above backdrop
         }
     }
 

@@ -7,6 +7,20 @@
 
 import Cocoa
 
+/// Append a line to /tmp/rectangle-carousel.log for debugging.
+func carouselLog(_ message: String) {
+    perfLog(message)
+    let line = "\(Date()): \(message)\n"
+    let path = "/tmp/rectangle-carousel.log"
+    if let fh = FileHandle(forWritingAtPath: path) {
+        fh.seekToEndOfFile()
+        fh.write(line.data(using: .utf8)!)
+        fh.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+    }
+}
+
 /// Manages a pool of NSPanels positioned along an elliptical track (merry-go-round).
 /// Each window gets its own panel, enabling true z-crossing through the HUD.
 /// The front window is large and above the HUD; back windows are small and behind it.
@@ -159,6 +173,7 @@ class WindowCarousel {
         for panel in panels {
             panel.orderFront(nil)
         }
+        logSlotState("setUp")
     }
 
     /// Set up with an entry animation: all windows start at back (θ=π), and the
@@ -196,6 +211,7 @@ class WindowCarousel {
         for panel in panels {
             panel.orderFront(nil)
         }
+        logSlotState("setUpWithEntryAnimation (start)")
 
         // Animate from current angles (offset by π) to final angles (subtract π from all)
         let startTime = CACurrentMediaTime()
@@ -219,6 +235,7 @@ class WindowCarousel {
                 self.animationTimer = nil
                 self.normalizeAngles()
                 self.assignPanels(direction: 1)
+                self.logSlotState("setUpWithEntryAnimation (end)")
             }
         }
     }
@@ -261,6 +278,7 @@ class WindowCarousel {
                 self.normalizeAngles()
                 self.updateFrontSlotIndex()
                 self.assignPanels(direction: direction)
+                self.logSlotState("cycle (end, dir=\(direction))")
             }
         }
 
@@ -398,6 +416,23 @@ class WindowCarousel {
                 imageView.image = item.slot.cachedImage
             }
         }
+    }
+
+    /// Log current slot and panel state for debugging.
+    private func logSlotState(_ label: String) {
+        var lines: [String] = ["[carousel] \(label): \(slots.count) slots, \(panels.count) panels, frontSlot=\(frontSlotIndex)"]
+        for (i, slot) in slots.enumerated() {
+            let deg = slot.angle * 180 / .pi
+            let cosθ = cos(slot.angle)
+            let isFront = cosθ > 0
+            let scale = (1 + cosθ) / 2 * (1 - config.backScale) + config.backScale
+            lines.append("  slot[\(i)] wid:\(slot.windowInfo.id) θ=\(String(format: "%.1f°", deg)) scale=\(String(format: "%.2f", scale)) \(isFront ? "FRONT" : "back") hasImage=\(slot.cachedImage != nil)")
+        }
+        for (i, panel) in panels.enumerated() {
+            let f = panel.frame
+            lines.append("  panel[\(i)] frame=(\(Int(f.origin.x)),\(Int(f.origin.y)) \(Int(f.width))x\(Int(f.height))) alpha=\(String(format: "%.2f", panel.alphaValue)) level=\(panel.level == Self.frontLevel ? "FRONT" : panel.level == Self.backLevel ? "back" : "other(\(panel.level.rawValue))")")
+        }
+        carouselLog(lines.joined(separator: "\n"))
     }
 
     /// Find the panel currently showing the front slot.
