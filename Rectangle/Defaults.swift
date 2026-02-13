@@ -100,6 +100,7 @@ class Defaults {
     static let modalModeTimeout = FloatDefault(key: "modalModeTimeout", defaultValue: 5)
     static let modalGridColumns = IntDefault(key: "modalGridColumns", defaultValue: 6)
     static let modalGridRows = IntDefault(key: "modalGridRows", defaultValue: 4)
+    static let backdropStyle = IntDefault(key: "backdropStyle")
 
     static var array: [Default] = [
         launchOnLogin,

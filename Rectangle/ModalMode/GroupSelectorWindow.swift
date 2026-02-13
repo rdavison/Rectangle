@@ -38,6 +38,9 @@ class GroupSelectorWindow: SelectorNode {
     /// Set before pushing this node to control the initial HUD layout.
     var initialHUDMode: AppSelectorWindow.HUDMode = .appsOnly
 
+    /// Set before pushing this node to override which app is initially selected.
+    var initialAppIndex: Int?
+
     /// Set before pushing this node to start directly in project mode.
     var initialGroupMode: Mode = .app
 
@@ -58,6 +61,7 @@ class GroupSelectorWindow: SelectorNode {
         } else {
             mode = .app
             appSelector.initialHUDMode = initialHUDMode
+            appSelector.initialAppIndex = initialAppIndex
             appSelector.activate(context: context)
         }
         showModeIndicator(on: context.screen)
@@ -156,16 +160,7 @@ class GroupSelectorWindow: SelectorNode {
     func handleCmdGrave(reverse: Bool = false) {
         switch mode {
         case .app:
-            switch appSelector.hudMode {
-            case .appsOnly:
-                appSelector.expandGallery()
-            case .windowsOnly, .combined:
-                if reverse {
-                    appSelector.cycleGalleryPrevious()
-                } else {
-                    appSelector.cycleGalleryNext()
-                }
-            }
+            appSelector.cycleWindowPreview(reverse: reverse)
         case .project:
             break // no-op for now
         }

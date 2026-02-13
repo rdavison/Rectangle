@@ -568,7 +568,7 @@ class ModalModeManager {
                 return
             }
 
-            // Otherwise, initiate GroupSelector in windowsOnly mode
+            // Otherwise, initiate GroupSelector for the frontmost app's windows
             if self.state == .inactive {
                 self.state = .active
                 self.targetWindowElement = AccessibilityElement.getFrontWindowElement()
@@ -577,8 +577,11 @@ class ModalModeManager {
             }
 
             let group = GroupSelectorWindow()
-            group.initialHUDMode = .windowsOnly
+            group.initialHUDMode = .appsOnly
+            group.initialAppIndex = 0  // Frontmost app (for window cycling)
             self.pushNode(group)
+            // Immediately show the first window preview
+            group.handleCmdGrave(reverse: reverse)
         }
 
         if Thread.isMainThread { work() } else { DispatchQueue.main.sync { work() } }

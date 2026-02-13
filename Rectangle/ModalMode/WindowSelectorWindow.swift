@@ -16,6 +16,11 @@ class WindowSelectorWindow: SelectorNode {
     private var previousWindowOrder: [CGWindowID] = []
     private var refreshTimer: Timer?
 
+    // Pre-fetched AX elements keyed by window ID — avoids syscall + AX iteration per arrow key
+    private var axElements: [CGWindowID: AccessibilityElement] = [:]
+    // Screenshot cache keyed by window ID
+    private var screenshotCache: [CGWindowID: NSImage] = [:]
+
     /// Set before activation to show windows for a specific app (e.g. from app selector).
     /// If nil, defaults to the frontmost app.
     var targetPID: pid_t?
@@ -23,6 +28,7 @@ class WindowSelectorWindow: SelectorNode {
     var panel: NSPanel? { selectorPanel }
 
     func activate(context: SelectorContext) {
+        let t0 = CACurrentMediaTime()
         let pid = targetPID ?? NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
         let myPID = ProcessInfo.processInfo.processIdentifier
         let normalLevel = CGWindowLevelForKey(.normalWindow)
@@ -30,8 +36,21 @@ class WindowSelectorWindow: SelectorNode {
         let allWindows = WindowUtil.getWindowList().filter {
             $0.level == normalLevel && $0.pid != myPID && $0.pid == pid
         }
+        let t1 = CACurrentMediaTime()
 
         previousWindowOrder = allWindows.map { $0.id }
+
+        // Pre-fetch all AX elements in one pass
+        axElements = [:]
+        let axApp = AccessibilityElement(pid)
+        if let windowElements = axApp.windowElements {
+            for element in windowElements {
+                if let wid = element.windowId {
+                    axElements[wid] = element
+                }
+            }
+        }
+        let t2 = CACurrentMediaTime()
 
         // Build thumbnails with placeholder images so the panel shows instantly
         let apps = NSWorkspace.shared.runningApplications.reduce(into: [pid_t: NSRunningApplication]()) {
@@ -62,27 +81,37 @@ class WindowSelectorWindow: SelectorNode {
         }
         selectorPanel = panel
         panel.makeKeyAndOrderFront(nil)
+        let t3 = CACurrentMediaTime()
 
         // Capture real thumbnails async
         let windowIDs = thumbnails.map { $0.windowID }
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            let cap0 = CACurrentMediaTime()
             for (i, windowID) in windowIDs.enumerated() {
                 if let image = WindowScreenshot.capture(windowID: windowID, maxSize: thumbSize) {
                     DispatchQueue.main.async {
+                        self?.screenshotCache[windowID] = image
                         self?.selectorPanel?.updateThumbnailImage(image, at: i)
                     }
                 }
             }
+            let cap1 = CACurrentMediaTime()
+            NSLog("[WinSelector] initial capture: %d windows in %.0fms", windowIDs.count, (cap1-cap0)*1000)
         }
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.refreshThumbnails()
         }
+
+        NSLog("[WinSelector] activate: getWindowList=%.1fms  axPrefetch=%.1fms  panelBuild=%.1fms  total=%.1fms (%d windows, %d ax)",
+              (t1-t0)*1000, (t2-t1)*1000, (t3-t2)*1000, (t3-t0)*1000, allWindows.count, axElements.count)
     }
 
     func deactivate() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        axElements.removeAll()
+        screenshotCache.removeAll()
         selectorPanel?.orderOut(nil)
         selectorPanel = nil
     }
@@ -122,16 +151,23 @@ class WindowSelectorWindow: SelectorNode {
 
     private func selectIndex(_ index: Int) {
         guard index >= 0, index < thumbnails.count, index != selectedIndex else { return }
+        let t0 = CACurrentMediaTime()
         selectedIndex = index
         selectorPanel?.updateSelection(selectedIndex)
+        let t1 = CACurrentMediaTime()
         previewWindow(at: selectedIndex)
+        let t2 = CACurrentMediaTime()
+        NSLog("[WinSelector] selectIndex(%d): updateUI=%.1fms  raise=%.1fms", index, (t1-t0)*1000, (t2-t1)*1000)
     }
 
     private func previewWindow(at index: Int) {
         guard index >= 0, index < thumbnails.count else { return }
         let windowID = thumbnails[index].windowID
-        if let element = AccessibilityElement.getWindowElement(windowID) {
-            element.performAction(kAXRaiseAction as String)
+        // Use pre-fetched AX element — no syscall needed
+        if let element = axElements[windowID] {
+            DispatchQueue.global(qos: .userInteractive).async {
+                element.performAction(kAXRaiseAction as String)
+            }
         }
     }
 
@@ -141,6 +177,7 @@ class WindowSelectorWindow: SelectorNode {
             for (i, thumb) in thumbsCopy.enumerated() {
                 if let newImage = WindowScreenshot.capture(windowID: thumb.windowID, maxSize: CGSize(width: 160, height: 120)) {
                     DispatchQueue.main.async {
+                        self?.screenshotCache[thumb.windowID] = newImage
                         self?.selectorPanel?.updateThumbnailImage(newImage, at: i)
                     }
                 }
@@ -151,7 +188,8 @@ class WindowSelectorWindow: SelectorNode {
     private func confirmSelection() {
         guard selectedIndex >= 0, selectedIndex < thumbnails.count else { return }
         let windowID = thumbnails[selectedIndex].windowID
-        if let element = AccessibilityElement.getWindowElement(windowID) {
+        // Use pre-fetched AX element — no syscall needed
+        if let element = axElements[windowID] {
             element.performAction(kAXRaiseAction as String)
         }
         let pid = thumbnails[selectedIndex].windowInfo.pid

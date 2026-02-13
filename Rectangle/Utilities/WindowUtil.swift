@@ -11,7 +11,7 @@ class WindowUtil {
     private static var windowListCache = TimeoutCache<[CGWindowID]?, [WindowInfo]>(timeout: 100)
     
     static func getWindowList(ids: [CGWindowID]? = nil, all: Bool = false) -> [WindowInfo] {
-        if let infos = windowListCache[ids] {
+        if !all, let infos = windowListCache[ids] {
             return infos
         }
         var infos = [WindowInfo]()
@@ -45,11 +45,19 @@ class WindowUtil {
                 if let rawProcessName {
                     processName = String(rawProcessName)
                 }
-                let info = WindowInfo(id: id, level: level, frame: frame, pid: pid, processName: processName)
+                var isOnscreen = !all  // optionOnScreenOnly → all returned are on-screen; optionAll → assume off-screen unless key says otherwise
+                var rawOnscreenPtr: UnsafeRawPointer?
+                if CFDictionaryGetValueIfPresent(rawInfo, unsafeBitCast(kCGWindowIsOnscreen, to: UnsafeRawPointer.self), &rawOnscreenPtr),
+                   let ptr = rawOnscreenPtr {
+                    isOnscreen = CFBooleanGetValue(unsafeBitCast(ptr, to: CFBoolean.self))
+                }
+                let info = WindowInfo(id: id, level: level, frame: frame, pid: pid, processName: processName, isOnscreen: isOnscreen)
                 infos.append(info)
             }
         }
-        windowListCache[ids] = infos
+        if !all {
+            windowListCache[ids] = infos
+        }
         return infos
     }
 }
@@ -60,4 +68,5 @@ struct WindowInfo {
     let frame: CGRect
     let pid: pid_t
     let processName: String?
+    let isOnscreen: Bool
 }

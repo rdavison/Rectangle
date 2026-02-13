@@ -8,29 +8,130 @@
 import Cocoa
 import Carbon
 
+/// Log perf message to stderr (always captured) and in-app log viewer (when open).
+func perfLog(_ message: String) {
+    NSLog("%@", message)
+    Logger.log(message)
+}
+
 class AppSelectorWindow: SelectorNode {
 
     enum HUDMode {
         case appsOnly, windowsOnly, combined
     }
 
-    private var selectorPanel: AppSelectorPanel?
-    private var apps: [NSRunningApplication] = []
-    private var selectedIndex: Int = 0
-    private var previousApp: NSRunningApplication?
-    private var refreshTimer: Timer?
+    // MARK: - Pure Logic (testable)
+
+    /// Build MRU-ordered PID list from window z-order.
+    /// `onScreenWindows` must come from `.optionOnScreenOnly` for reliable z-order.
+    /// `allWindows` from `.optionAll` is used only to find hidden app windows.
+    static func buildMRUPIDs(
+        onScreenWindows: [WindowInfo],
+        allWindows: [WindowInfo],
+        myPID: pid_t,
+        normalLevel: CGWindowLevel,
+        hiddenPIDs: Set<pid_t>
+    ) -> [pid_t] {
+        var seenPIDs = Set<pid_t>()
+        var orderedPIDs: [pid_t] = []
+        // On-screen windows determine MRU order (from .optionOnScreenOnly — reliable z-order)
+        for win in onScreenWindows where win.level == normalLevel && win.pid != myPID {
+            if seenPIDs.insert(win.pid).inserted {
+                orderedPIDs.append(win.pid)
+            }
+        }
+        // Hidden apps that have windows (appended after on-screen apps)
+        for win in allWindows where win.level == normalLevel && win.pid != myPID && !win.isOnscreen && hiddenPIDs.contains(win.pid) {
+            if seenPIDs.insert(win.pid).inserted {
+                orderedPIDs.append(win.pid)
+            }
+        }
+        return orderedPIDs
+    }
+
+    /// Filter windows for the 3D backdrop display.
+    static func filterWindowsForBackdrop(
+        from windows: [WindowInfo],
+        pid: pid_t,
+        normalLevel: CGWindowLevel,
+        appIsHidden: Bool,
+        minSize: CGFloat = 50
+    ) -> [WindowInfo] {
+        return windows.filter {
+            $0.pid == pid && $0.level == normalLevel
+                && $0.frame.width > minSize && $0.frame.height > minSize
+                && ($0.isOnscreen || appIsHidden)
+        }
+    }
+
+    /// Filter windows for the gallery thumbnail strip.
+    static func filterWindowsForGallery(
+        from windows: [WindowInfo],
+        pid: pid_t,
+        myPID: pid_t,
+        normalLevel: CGWindowLevel,
+        appIsHidden: Bool,
+        minSize: CGFloat = 50
+    ) -> [WindowInfo] {
+        return windows.filter {
+            $0.pid == pid && $0.level == normalLevel && $0.pid != myPID
+                && $0.frame.width > minSize && $0.frame.height > minSize
+                && ($0.isOnscreen || appIsHidden)
+        }
+    }
+
+    /// Compute initial selected index for appsOnly mode.
+    static func initialSelectionIndex(appCount: Int, override: Int?) -> Int {
+        if let override = override, override < appCount {
+            return override
+        }
+        return appCount > 1 ? 1 : 0
+    }
+
+    // MARK: - Properties
+
+    private(set) var selectorPanel: AppSelectorPanel?
+    var apps: [NSRunningApplication] = []
+    var selectedIndex: Int = 0
+    private(set) var previousApp: NSRunningApplication?
+    var refreshTimer: Timer?
 
     // Gallery state (window thumbnails for the selected app)
-    private var galleryWindows: [WindowInfo] = []
-    private var gallerySelectedIndex: Int = 0
+    var galleryWindows: [WindowInfo] = []
+    var gallerySelectedIndex: Int = 0
+
+    // 3D backdrop for appsOnly mode
+    private(set) var backdropPanel: CarouselBackdropPanel?
+    var backdropWindows: [WindowInfo] = []
+
+    // Cached window list snapshots — taken once at activation, reused for tab switches.
+    // onScreen has reliable z-order (.optionOnScreenOnly); all includes off-screen windows.
+    var cachedOnScreenWindowList: [WindowInfo] = []
+    var cachedWindowList: [WindowInfo] = []
 
     // Pre-cached AX elements and screenshots keyed by window ID
-    private var galleryElements: [CGWindowID: AccessibilityElement] = [:]
-    private var screenshotCache: [CGWindowID: NSImage] = [:]
+    var galleryElements: [CGWindowID: AccessibilityElement] = [:]
+    var screenshotCache: [CGWindowID: CGImage] = [:]
 
     // HUD mode
-    private(set) var hudMode: HUDMode = .appsOnly
+    var hudMode: HUDMode = .appsOnly
     var initialHUDMode: HUDMode = .appsOnly
+    var initialAppIndex: Int?
+
+    // Window preview state — tracks whether we're cycling windows with `
+    var isPreviewingWindow: Bool = false
+    var previewOverlay: NSPanel?
+    var previewRefreshTimer: Timer?
+    var carouselTimer: Timer?
+    var carouselOutgoing: NSPanel?
+
+    // Generation counter — incremented on each selection change.
+    // Background callbacks capture the current generation and check it before
+    // applying updates, discarding stale results from previous selections.
+    private(set) var selectionGeneration: UInt = 0
+
+    // Debounced raise — cancelled on each new selection to prevent concurrent raises.
+    var pendingRaiseWork: DispatchWorkItem?
 
     var panel: NSPanel? { selectorPanel }
 
@@ -39,21 +140,34 @@ class AppSelectorWindow: SelectorNode {
         return apps[selectedIndex]
     }
 
+    // MARK: - Lifecycle
+
     func activate(context: SelectorContext) {
+        let activateStart = CFAbsoluteTimeGetCurrent()
         previousApp = NSWorkspace.shared.frontmostApplication
 
         // Build app list in MRU order using window z-order
         let myPID = ProcessInfo.processInfo.processIdentifier
         let normalLevel = CGWindowLevelForKey(.normalWindow)
-        let allWindows = WindowUtil.getWindowList()
+        let t0 = CFAbsoluteTimeGetCurrent()
+        // .optionOnScreenOnly gives reliable front-to-back z-order for MRU
+        let onScreenWindows = WindowUtil.getWindowList()
+        let allWindows = WindowUtil.getWindowList(all: true)
+        perfLog("[perf] getWindowList \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - t0) * 1000))ms (\(onScreenWindows.count) on-screen, \(allWindows.count) all)")
+        cachedOnScreenWindowList = onScreenWindows
+        cachedWindowList = allWindows
 
-        var seenPIDs = Set<pid_t>()
-        var orderedPIDs: [pid_t] = []
-        for win in allWindows where win.level == normalLevel && win.pid != myPID {
-            if seenPIDs.insert(win.pid).inserted {
-                orderedPIDs.append(win.pid)
-            }
-        }
+        // Build hidden PID set so we can include hidden app windows later
+        let hiddenPIDs: Set<pid_t> = Set(
+            NSWorkspace.shared.runningApplications
+                .filter { $0.isHidden }
+                .map { $0.processIdentifier }
+        )
+
+        let orderedPIDs = Self.buildMRUPIDs(
+            onScreenWindows: onScreenWindows, allWindows: allWindows,
+            myPID: myPID, normalLevel: normalLevel, hiddenPIDs: hiddenPIDs
+        )
 
         let runningApps = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && !$0.isTerminated
@@ -68,6 +182,9 @@ class AppSelectorWindow: SelectorNode {
         }
         apps = ordered
 
+        let appNames = apps.prefix(10).map { $0.localizedName ?? "pid:\($0.processIdentifier)" }
+        perfLog("[mru] app order: \(appNames.joined(separator: " → "))")
+
         hudMode = initialHUDMode
 
         // Build initial gallery windows if starting in window mode
@@ -78,12 +195,13 @@ class AppSelectorWindow: SelectorNode {
             // Start at index 1 (next window) like app selector starts at next app
             gallerySelectedIndex = galleryWindows.count > 1 ? 1 : 0
         } else {
-            // appsOnly: start with the second app (index 1) since index 0 is the current app
-            selectedIndex = apps.count > 1 ? 1 : 0
+            selectedIndex = Self.initialSelectionIndex(appCount: apps.count, override: initialAppIndex)
             galleryWindows = []
             gallerySelectedIndex = 0
+            loadBackdropWindows(for: selectedIndex)
         }
 
+        let t1 = CFAbsoluteTimeGetCurrent()
         let panel = AppSelectorPanel(
             mode: hudMode,
             apps: apps,
@@ -92,6 +210,7 @@ class AppSelectorWindow: SelectorNode {
             selectedWindowIndex: gallerySelectedIndex,
             screen: context.screen
         )
+        perfLog("[perf] AppSelectorPanel init \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - t1) * 1000))ms")
         panel.onAppHover = { [weak self] index in
             self?.selectAppIndex(index)
         }
@@ -120,10 +239,24 @@ class AppSelectorWindow: SelectorNode {
         // Start refresh timer only when gallery is visible
         startRefreshTimerIfNeeded()
 
-        // Pre-cache screenshots for selected app so gallery opens instantly
+        // Create 3D backdrop for appsOnly mode
         if hudMode == .appsOnly {
-            precacheScreenshots(for: selectedIndex)
+            let backdrop = CarouselBackdropPanel(screen: context.screen)
+            let styles: [CarouselBackdropPanel.Style] = [.cascade, .expose, .ring]
+            backdrop.style = styles[min(Defaults.backdropStyle.value, styles.count - 1)]
+            backdropPanel = backdrop
+            backdrop.alphaValue = 0
+            backdrop.orderFront(nil)
+            panel.orderFront(nil)  // keep HUD above backdrop
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                backdrop.animator().alphaValue = 1.0
+            }
+            captureBackdropScreenshots()
+            precacheAllAppScreenshots()
         }
+        perfLog("[perf] activate() total \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - activateStart) * 1000))ms (mode=\(hudMode), \(apps.count) apps)")
     }
 
     func deactivate() {
@@ -131,10 +264,30 @@ class AppSelectorWindow: SelectorNode {
     }
 
     func deactivate(animated: Bool) {
+        // Invalidate generation so any in-flight async work is discarded
+        selectionGeneration &+= 1
+        pendingRaiseWork?.cancel()
+        pendingRaiseWork = nil
+
         refreshTimer?.invalidate()
         refreshTimer = nil
+        isPreviewingWindow = false
+        previewRefreshTimer?.invalidate()
+        previewRefreshTimer = nil
+        carouselTimer?.invalidate()
+        carouselTimer = nil
+        carouselOutgoing?.orderOut(nil)
+        carouselOutgoing = nil
+        previewOverlay?.orderOut(nil)
+        previewOverlay = nil
         screenshotCache.removeAll()
         galleryElements.removeAll()
+        cachedOnScreenWindowList = []
+        cachedWindowList = []
+        backdropWindows = []
+        galleryWindows = []
+        backdropPanel?.orderOut(nil)
+        backdropPanel = nil
 
         if animated, let panel = selectorPanel {
             selectorPanel = nil
@@ -154,6 +307,8 @@ class AppSelectorWindow: SelectorNode {
             panel.orderOut(nil)
         }
     }
+
+    // MARK: - SelectorNode Protocol
 
     func handleKeyDown(keyCode: Int, modifiers: NSEvent.ModifierFlags, characters: String?) -> KeyEventResult {
         // Left/Right arrows navigate gallery when visible, else navigate apps
@@ -190,13 +345,13 @@ class AppSelectorWindow: SelectorNode {
     func navigateNextApp() {
         pruneTerminatedApps()
         guard !apps.isEmpty else { return }
-        selectAppIndex((selectedIndex + 1) % apps.count)
+        selectAppIndex((selectedIndex + 1) % apps.count, direction: 1)
     }
 
     func navigatePreviousApp() {
         pruneTerminatedApps()
         guard !apps.isEmpty else { return }
-        selectAppIndex((selectedIndex - 1 + apps.count) % apps.count)
+        selectAppIndex((selectedIndex - 1 + apps.count) % apps.count, direction: -1)
     }
 
     /// Remove terminated apps from the list and rebuild the panel if anything changed.
@@ -229,7 +384,9 @@ class AppSelectorWindow: SelectorNode {
     private func pruneStaleGalleryWindows() {
         guard !galleryWindows.isEmpty else { return }
 
-        let liveIDs = Set(WindowUtil.getWindowList().map { $0.id })
+        // Use cached window list for pruning — windows that existed at activation are still valid
+        // for navigation. A truly closed window will fail to raise (harmless).
+        let liveIDs = Set(cachedWindowList.map { $0.id })
         let oldCount = galleryWindows.count
 
         galleryWindows.removeAll { !liveIDs.contains($0.id) }
@@ -249,44 +406,27 @@ class AppSelectorWindow: SelectorNode {
         }
     }
 
-    private func selectAppIndex(_ index: Int) {
+    private func selectAppIndex(_ index: Int, direction: CGFloat = 0) {
         guard index >= 0, index < apps.count, index != selectedIndex else { return }
+        let tabStart = CFAbsoluteTimeGetCurrent()
+        hideWindowPreview()
+        galleryWindows = []  // Reset so next ` reloads for new app
+        selectionGeneration &+= 1
         selectedIndex = index
         selectorPanel?.updateAppSelection(selectedIndex)
 
-        // Foreground all windows of the selected app
-        raiseAllWindows(for: index)
-
-        // In combined mode, refresh gallery for the newly selected app
-        if hudMode == .combined {
+        if hudMode == .appsOnly {
+            loadBackdropWindows(for: selectedIndex)
+            captureBackdropScreenshots(direction: direction)
+        } else if hudMode == .combined {
             loadGalleryWindows(for: selectedIndex)
             gallerySelectedIndex = 0
             selectorPanel?.replaceGallery(count: galleryWindows.count)
             captureGalleryThumbnails()
             selectorPanel?.updateWindowSelection(gallerySelectedIndex)
-        } else if hudMode == .appsOnly {
-            // Pre-cache for the newly selected app
-            precacheScreenshots(for: selectedIndex)
         }
-    }
-
-    /// Raise all non-minimized windows belonging to the app at the given index.
-    private func raiseAllWindows(for appIndex: Int) {
-        guard appIndex >= 0, appIndex < apps.count else { return }
-        let app = apps[appIndex]
-
-        // Raise each non-minimized window individually first
-        let axApp = AccessibilityElement(app.processIdentifier)
-        if let windowElements = axApp.windowElements {
-            for element in windowElements {
-                if element.isMinimized != true {
-                    element.performAction(kAXRaiseAction as String)
-                }
-            }
-        }
-
-        // Then activate with all-windows flag to bring the entire app layer to front
-        app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        let appName = apps[index].localizedName ?? "pid:\(apps[index].processIdentifier)"
+        perfLog("[perf] selectAppIndex \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - tabStart) * 1000))ms → \(appName)")
     }
 
     // MARK: - Gallery Navigation
@@ -318,28 +458,6 @@ class AppSelectorWindow: SelectorNode {
 
     // MARK: - Mode Transitions
 
-    func expandGallery() {
-        guard hudMode == .appsOnly else { return }
-        loadGalleryWindows(for: selectedIndex)
-        guard !galleryWindows.isEmpty else { return }
-
-        hudMode = .combined
-        gallerySelectedIndex = galleryWindows.count > 1 ? 1 : 0
-
-        selectorPanel?.reconfigure(
-            mode: .combined,
-            apps: apps,
-            selectedAppIndex: selectedIndex,
-            galleryCount: galleryWindows.count,
-            selectedWindowIndex: gallerySelectedIndex
-        )
-
-        captureGalleryThumbnails()
-        startRefreshTimerIfNeeded()
-
-        raiseWindow(gallerySelectedIndex)
-    }
-
     func expandAppStrip() {
         guard hudMode == .windowsOnly else { return }
         hudMode = .combined
@@ -360,23 +478,36 @@ class AppSelectorWindow: SelectorNode {
 
     private func confirmSelection() {
         pruneTerminatedApps()
+
+        // Animate preview overlay to the target window's position before dismissing
+        if isPreviewingWindow, gallerySelectedIndex >= 0, gallerySelectedIndex < galleryWindows.count {
+            let win = galleryWindows[gallerySelectedIndex]
+            animatePreviewFlyout(to: win)
+        }
+
         switch hudMode {
         case .appsOnly:
             guard selectedIndex >= 0, selectedIndex < apps.count else { return }
             let app = apps[selectedIndex]
             guard !app.isTerminated else { return }
 
-            let myPID = ProcessInfo.processInfo.processIdentifier
-            let normalLevel = CGWindowLevelForKey(.normalWindow)
-            let hasWindows = WindowUtil.getWindowList().contains {
-                $0.pid == app.processIdentifier && $0.level == normalLevel && $0.pid != myPID
+            // If the user was previewing a specific window (via Cmd+`), raise it
+            if isPreviewingWindow, gallerySelectedIndex >= 0, gallerySelectedIndex < galleryWindows.count {
+                let win = galleryWindows[gallerySelectedIndex]
+                if let element = galleryElements[win.id] {
+                    element.performAction(kAXRaiseAction as String)
+                }
             }
 
-            if !hasWindows, let bundleURL = app.bundleURL {
-                NSWorkspace.shared.open(bundleURL)
-            } else {
-                app.activate(options: .activateIgnoringOtherApps)
+            // Start fly-out animation on the 3D backdrop
+            if !backdropWindows.isEmpty, let backdrop = backdropPanel {
+                let windowFrames = backdropWindows.map { $0.frame }
+                backdrop.animateFlyout(windowFrames: windowFrames) { [weak backdrop] in
+                    backdrop?.orderOut(nil)
+                }
             }
+
+            activateApp(app)
 
         case .windowsOnly, .combined:
             guard gallerySelectedIndex >= 0, gallerySelectedIndex < galleryWindows.count else { return }
@@ -388,95 +519,28 @@ class AppSelectorWindow: SelectorNode {
         }
     }
 
+    private func activateApp(_ app: NSRunningApplication) {
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let normalLevel = CGWindowLevelForKey(.normalWindow)
+        // Use cached window list — no need for a fresh syscall on confirm
+        let hasWindows = cachedWindowList.contains {
+            $0.pid == app.processIdentifier && $0.level == normalLevel && $0.pid != myPID
+        }
+
+        if !hasWindows, let bundleURL = app.bundleURL {
+            NSWorkspace.shared.open(bundleURL)
+        } else {
+            app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        }
+    }
+
     func restorePrevious() {
         previousApp?.activate(options: .activateIgnoringOtherApps)
     }
 
-    // MARK: - Gallery Windows
-
-    private func loadGalleryWindows(for appIndex: Int) {
-        guard appIndex >= 0, appIndex < apps.count else {
-            galleryWindows = []
-            galleryElements = [:]
-            return
-        }
-        let app = apps[appIndex]
-        let pid = app.processIdentifier
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        let normalLevel = CGWindowLevelForKey(.normalWindow)
-
-        galleryWindows = WindowUtil.getWindowList().filter {
-            $0.pid == pid && $0.level == normalLevel && $0.pid != myPID
-        }
-
-        // Pre-fetch all AX elements for this app's windows in one pass
-        galleryElements = [:]
-        let axApp = AccessibilityElement(pid)
-        if let windowElements = axApp.windowElements {
-            for element in windowElements {
-                if let wid = element.windowId {
-                    galleryElements[wid] = element
-                }
-            }
-        }
-    }
-
-    private func captureGalleryThumbnails() {
-        let windows = galleryWindows
-        let cache = screenshotCache
-
-        // Immediately apply any cached screenshots
-        for (i, win) in windows.enumerated() {
-            if let cached = cache[win.id] {
-                selectorPanel?.updateGalleryThumbnail(cached, at: i)
-            }
-        }
-
-        // Then capture fresh screenshots in the background
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            for (i, win) in windows.enumerated() {
-                if let image = WindowScreenshot.capture(windowID: win.id, maxSize: CGSize(width: 160, height: 120)) {
-                    DispatchQueue.main.async {
-                        self?.screenshotCache[win.id] = image
-                        self?.selectorPanel?.updateGalleryThumbnail(image, at: i)
-                    }
-                }
-            }
-        }
-    }
-
-    private func precacheScreenshots(for appIndex: Int) {
-        guard appIndex >= 0, appIndex < apps.count else { return }
-        let pid = apps[appIndex].processIdentifier
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        let normalLevel = CGWindowLevelForKey(.normalWindow)
-
-        let windows = WindowUtil.getWindowList().filter {
-            $0.pid == pid && $0.level == normalLevel && $0.pid != myPID
-        }
-
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            for win in windows {
-                if let image = WindowScreenshot.capture(windowID: win.id, maxSize: CGSize(width: 160, height: 120)) {
-                    DispatchQueue.main.async {
-                        self?.screenshotCache[win.id] = image
-                    }
-                }
-            }
-        }
-    }
-
-    private func raiseWindow(_ galleryIndex: Int) {
-        guard galleryIndex >= 0, galleryIndex < galleryWindows.count else { return }
-        let win = galleryWindows[galleryIndex]
-        if let element = galleryElements[win.id] {
-            element.performAction(kAXRaiseAction as String)
-        }
-    }
-
     // MARK: - Refresh Timer
 
-    private func startRefreshTimerIfNeeded() {
+    func startRefreshTimerIfNeeded() {
         refreshTimer?.invalidate()
         refreshTimer = nil
 
@@ -485,524 +549,5 @@ class AppSelectorWindow: SelectorNode {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.refreshGalleryThumbnails()
         }
-    }
-
-    private func refreshGalleryThumbnails() {
-        let windows = galleryWindows
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            for (i, win) in windows.enumerated() {
-                if let image = WindowScreenshot.capture(windowID: win.id, maxSize: CGSize(width: 160, height: 120)) {
-                    DispatchQueue.main.async {
-                        self?.selectorPanel?.updateGalleryThumbnail(image, at: i)
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - AppSelectorPanel
-
-private class AppSelectorPanel: NSPanel {
-
-    override var canBecomeKey: Bool { true }
-
-    // Layout constants
-    private let iconSize: CGFloat = 96
-    private let iconPadding: CGFloat = 16
-    private let panelPadding: CGFloat = 16
-    private let galleryThumbWidth: CGFloat = 160
-    private let galleryThumbHeight: CGFloat = 120
-    private let galleryThumbPadding: CGFloat = 12
-    private var mode: AppSelectorWindow.HUDMode
-    private var apps: [NSRunningApplication]
-    private var targetScreen: NSScreen
-
-    // Subviews
-    private var visualEffect: NSVisualEffectView!
-    private var iconStripScrollView: NSScrollView?
-    private var iconViews: [NSImageView] = []
-    private var appSelectionBox: NSView?
-    private var galleryScrollView: NSScrollView?
-    private var galleryThumbViews: [NSImageView] = []
-    private var gallerySelectionBox: NSView?
-    private var galleryLeftInset: CGFloat = 0
-
-    var onAppHover: ((Int) -> Void)?
-    var onWindowHover: ((Int) -> Void)?
-    var onClickConfirm: (() -> Void)?
-
-    init(mode: AppSelectorWindow.HUDMode,
-         apps: [NSRunningApplication],
-         selectedAppIndex: Int,
-         galleryCount: Int,
-         selectedWindowIndex: Int,
-         screen: NSScreen) {
-        self.mode = mode
-        self.apps = apps
-        self.targetScreen = screen
-
-        let size = AppSelectorPanel.panelSize(mode: mode, appCount: apps.count, galleryCount: galleryCount, screen: screen)
-        let panelRect = NSRect(
-            x: screen.visibleFrame.midX - size.width / 2,
-            y: screen.visibleFrame.midY - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
-
-        super.init(contentRect: panelRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-
-        isOpaque = false
-        level = .popUpMenu
-        hasShadow = true
-        isReleasedWhenClosed = false
-        backgroundColor = .clear
-        acceptsMouseMovedEvents = true
-        collectionBehavior = [.transient, .canJoinAllSpaces]
-
-        visualEffect = NSVisualEffectView(frame: NSRect(origin: .zero, size: panelRect.size))
-        visualEffect.material = .hudWindow
-        visualEffect.state = .active
-        visualEffect.wantsLayer = true
-        visualEffect.layer?.cornerRadius = 12
-        visualEffect.autoresizingMask = [.width, .height]
-        contentView = visualEffect
-
-        buildLayout(mode: mode, selectedAppIndex: selectedAppIndex, galleryCount: galleryCount, selectedWindowIndex: selectedWindowIndex)
-
-        let trackingArea = NSTrackingArea(
-            rect: visualEffect.bounds,
-            options: [.mouseMoved, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        visualEffect.addTrackingArea(trackingArea)
-    }
-
-    // MARK: - Reconfigure (mode transition)
-
-    func reconfigure(mode: AppSelectorWindow.HUDMode,
-                     apps: [NSRunningApplication],
-                     selectedAppIndex: Int,
-                     galleryCount: Int,
-                     selectedWindowIndex: Int) {
-        self.mode = mode
-        self.apps = apps
-
-        // Clear all subviews
-        clearLayout()
-
-        // Resize panel
-        let size = AppSelectorPanel.panelSize(mode: mode, appCount: apps.count, galleryCount: galleryCount, screen: targetScreen)
-        let newRect = NSRect(
-            x: targetScreen.visibleFrame.midX - size.width / 2,
-            y: targetScreen.visibleFrame.midY - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
-        setFrame(newRect, display: false)
-        visualEffect.frame = NSRect(origin: .zero, size: size)
-
-        buildLayout(mode: mode, selectedAppIndex: selectedAppIndex, galleryCount: galleryCount, selectedWindowIndex: selectedWindowIndex)
-    }
-
-    // MARK: - Update Methods
-
-    func updateAppSelection(_ index: Int) {
-        guard index >= 0, index < apps.count else { return }
-
-        for (i, view) in iconViews.enumerated() {
-            view.alphaValue = 1.0
-        }
-
-        let itemWidth = iconSize + iconPadding
-        if let scrollView = iconStripScrollView, let selBox = appSelectionBox {
-            let boxX = CGFloat(index) * itemWidth
-            let scrollFrame = scrollView.frame
-
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.035
-                selBox.animator().frame = NSRect(
-                    x: scrollFrame.origin.x + boxX,
-                    y: scrollFrame.origin.y - (itemWidth - iconSize) / 2,
-                    width: itemWidth,
-                    height: itemWidth
-                )
-            }
-
-            let targetX = CGFloat(index) * itemWidth - scrollView.bounds.width / 2 + itemWidth / 2
-            let maxScroll = max(0, (scrollView.documentView?.frame.width ?? 0) - scrollView.bounds.width)
-            let clampedX = max(0, min(targetX, maxScroll))
-            scrollView.contentView.scroll(to: NSPoint(x: clampedX, y: 0))
-        }
-    }
-
-    func updateWindowSelection(_ index: Int) {
-        guard index >= 0, index < galleryThumbViews.count else { return }
-
-        for (i, view) in galleryThumbViews.enumerated() {
-            view.alphaValue = 1.0
-            view.layer?.borderColor = (i == index)
-                ? NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
-                : NSColor.white.withAlphaComponent(0.2).cgColor
-            view.layer?.borderWidth = (i == index) ? 2.0 : 1.0
-        }
-
-        let itemWidth = galleryThumbWidth + galleryThumbPadding
-        if let scrollView = galleryScrollView, let selBox = gallerySelectionBox {
-            let scrollFrame = scrollView.frame
-            let thumbY = (scrollView.bounds.height - galleryThumbHeight) / 2
-            let boxX = scrollFrame.origin.x + galleryLeftInset + CGFloat(index) * itemWidth - galleryThumbPadding / 2
-            let boxY = scrollFrame.origin.y + thumbY - 4
-            let boxWidth = galleryThumbWidth + galleryThumbPadding
-            let boxHeight = galleryThumbHeight + 8
-
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.035
-                selBox.animator().frame = NSRect(x: boxX, y: boxY, width: boxWidth, height: boxHeight)
-            }
-
-            let targetX = galleryLeftInset + CGFloat(index) * itemWidth - scrollView.bounds.width / 2 + itemWidth / 2
-            let maxScroll = max(0, (scrollView.documentView?.frame.width ?? 0) - scrollView.bounds.width)
-            let clampedX = max(0, min(targetX, maxScroll))
-            scrollView.contentView.scroll(to: NSPoint(x: clampedX, y: 0))
-        }
-    }
-
-    func updateGalleryThumbnail(_ image: NSImage, at index: Int) {
-        guard index >= 0, index < galleryThumbViews.count else { return }
-        let view = galleryThumbViews[index]
-        view.image = image
-        if view.alphaValue < 1.0 {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.15
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                view.animator().alphaValue = 1.0
-            }
-        }
-    }
-
-    func replaceGallery(count: Int) {
-        // Remove old gallery views
-        galleryScrollView?.removeFromSuperview()
-        gallerySelectionBox?.removeFromSuperview()
-        galleryThumbViews.removeAll()
-
-        guard let scrollFrame = galleryScrollViewFrame() else { return }
-
-        // Rebuild gallery selection box
-        let selBox = makeSelectionBox()
-        visualEffect.addSubview(selBox)
-        gallerySelectionBox = selBox
-
-        // Rebuild gallery scroll
-        let (scrollView, thumbViews) = buildGalleryStrip(frame: scrollFrame, count: count)
-        visualEffect.addSubview(scrollView)
-        galleryScrollView = scrollView
-        galleryThumbViews = thumbViews
-    }
-
-    // MARK: - Mouse Events
-
-    override func mouseMoved(with event: NSEvent) {
-        if let index = appIconIndex(for: event) {
-            onAppHover?(index)
-        } else if let index = galleryThumbIndex(for: event) {
-            onWindowHover?(index)
-        }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        if appIconIndex(for: event) != nil || galleryThumbIndex(for: event) != nil {
-            onClickConfirm?()
-        }
-    }
-
-    // MARK: - Hit Testing
-
-    private func appIconIndex(for event: NSEvent) -> Int? {
-        guard let contentView = contentView, let scrollView = iconStripScrollView else { return nil }
-        let pointInContent = contentView.convert(event.locationInWindow, from: nil)
-
-        let scrollFrame = scrollView.frame
-        guard scrollFrame.contains(pointInContent) else { return nil }
-
-        let pointInScroll = scrollView.convert(pointInContent, from: contentView)
-        let scrollOffset = scrollView.contentView.bounds.origin
-        let pointInDoc = NSPoint(x: pointInScroll.x + scrollOffset.x, y: pointInScroll.y + scrollOffset.y)
-
-        let itemWidth = iconSize + iconPadding
-        let index = Int(pointInDoc.x / itemWidth)
-        guard index >= 0, index < apps.count else { return nil }
-        return index
-    }
-
-    private func galleryThumbIndex(for event: NSEvent) -> Int? {
-        guard let contentView = contentView, let scrollView = galleryScrollView else { return nil }
-        let pointInContent = contentView.convert(event.locationInWindow, from: nil)
-
-        let scrollFrame = scrollView.frame
-        guard scrollFrame.contains(pointInContent) else { return nil }
-
-        let pointInScroll = scrollView.convert(pointInContent, from: contentView)
-        let scrollOffset = scrollView.contentView.bounds.origin
-        let pointInDoc = NSPoint(x: pointInScroll.x + scrollOffset.x, y: pointInScroll.y + scrollOffset.y)
-
-        let itemWidth = galleryThumbWidth + galleryThumbPadding
-        let adjustedX = pointInDoc.x - galleryLeftInset
-        guard adjustedX >= 0 else { return nil }
-        let index = Int(adjustedX / itemWidth)
-        guard index >= 0, index < galleryThumbViews.count else { return nil }
-        return index
-    }
-
-    // MARK: - Panel Sizing
-
-    private static func panelSize(mode: AppSelectorWindow.HUDMode, appCount: Int, galleryCount: Int, screen: NSScreen) -> NSSize {
-        let panelPadding: CGFloat = 16
-        let iconSize: CGFloat = 96
-        let iconPadding: CGFloat = 16
-        let galleryThumbWidth: CGFloat = 160
-        let galleryThumbPadding: CGFloat = 12
-        let galleryThumbHeight: CGFloat = 120
-        let iconItemWidth = iconSize + iconPadding
-
-        let maxWidth = screen.visibleFrame.width - 40
-
-        switch mode {
-        case .appsOnly:
-            let totalAppWidth = CGFloat(appCount) * iconItemWidth + panelPadding * 2
-            let width = min(max(totalAppWidth, 400), maxWidth)
-            // [pad] icon strip [pad]
-            let height = panelPadding + iconItemWidth + panelPadding
-            return NSSize(width: width, height: height)
-
-        case .windowsOnly:
-            let galleryItemWidth = galleryThumbWidth + galleryThumbPadding
-            let totalGalleryWidth = CGFloat(galleryCount) * galleryItemWidth + panelPadding * 2
-            let width = min(max(totalGalleryWidth, 400), maxWidth)
-            // [pad] thumbnail strip [pad]
-            let height = panelPadding + galleryThumbHeight + panelPadding
-            return NSSize(width: width, height: height)
-
-        case .combined:
-            let totalAppWidth = CGFloat(appCount) * iconItemWidth + panelPadding * 2
-            let galleryItemWidth = galleryThumbWidth + galleryThumbPadding
-            let totalGalleryWidth = CGFloat(galleryCount) * galleryItemWidth + panelPadding * 2
-            let width = min(max(max(totalAppWidth, totalGalleryWidth), 400), maxWidth)
-            // [pad] thumbnails [12] icon strip [pad]
-            let height = panelPadding + galleryThumbHeight + 12 + iconItemWidth + panelPadding
-            return NSSize(width: width, height: height)
-        }
-    }
-
-    // MARK: - Layout Building
-
-    private func clearLayout() {
-        iconStripScrollView?.removeFromSuperview()
-        iconStripScrollView = nil
-        iconViews.removeAll()
-        appSelectionBox?.removeFromSuperview()
-        appSelectionBox = nil
-        galleryScrollView?.removeFromSuperview()
-        galleryScrollView = nil
-        galleryThumbViews.removeAll()
-        gallerySelectionBox?.removeFromSuperview()
-        gallerySelectionBox = nil
-        galleryLeftInset = 0
-    }
-
-    private func buildLayout(mode: AppSelectorWindow.HUDMode, selectedAppIndex: Int, galleryCount: Int, selectedWindowIndex: Int) {
-        switch mode {
-        case .appsOnly:
-            buildAppsOnlyLayout(selectedAppIndex: selectedAppIndex)
-        case .windowsOnly:
-            buildWindowsOnlyLayout(galleryCount: galleryCount, selectedWindowIndex: selectedWindowIndex)
-        case .combined:
-            buildCombinedLayout(selectedAppIndex: selectedAppIndex, galleryCount: galleryCount, selectedWindowIndex: selectedWindowIndex)
-        }
-    }
-
-    private func buildAppsOnlyLayout(selectedAppIndex: Int) {
-        let itemWidth = iconSize + iconPadding
-        let panelW = frame.width
-
-        // Selection box (behind icons)
-        let selBox = makeSelectionBox()
-        visualEffect.addSubview(selBox)
-        appSelectionBox = selBox
-
-        // Icon strip scroll view
-        let stripY = panelPadding
-        let stripHeight = iconSize
-        let scrollView = NSScrollView(frame: NSRect(x: panelPadding, y: stripY + (itemWidth - iconSize) / 2, width: panelW - panelPadding * 2, height: stripHeight))
-        scrollView.drawsBackground = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autoresizingMask = [.width]
-
-        let clipView = NSClipView(frame: scrollView.bounds)
-        clipView.drawsBackground = false
-        scrollView.contentView = clipView
-
-        let docWidth = CGFloat(apps.count) * itemWidth
-        let docView = NSView(frame: NSRect(x: 0, y: 0, width: max(docWidth, scrollView.bounds.width), height: stripHeight))
-        scrollView.documentView = docView
-
-        for (index, app) in apps.enumerated() {
-            let x = CGFloat(index) * itemWidth + (itemWidth - iconSize) / 2
-            let imageView = NSImageView(frame: NSRect(x: x, y: 0, width: iconSize, height: iconSize))
-            imageView.image = app.icon
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageView.wantsLayer = true
-            imageView.layer?.cornerRadius = 12
-            docView.addSubview(imageView)
-            iconViews.append(imageView)
-        }
-
-        visualEffect.addSubview(scrollView)
-        iconStripScrollView = scrollView
-
-        updateAppSelection(selectedAppIndex)
-    }
-
-    private func buildWindowsOnlyLayout(galleryCount: Int, selectedWindowIndex: Int) {
-        let panelW = frame.width
-
-        // Gallery selection box
-        let selBox = makeSelectionBox()
-        visualEffect.addSubview(selBox)
-        gallerySelectionBox = selBox
-
-        // Gallery strip
-        let galleryFrame = NSRect(x: panelPadding, y: panelPadding, width: panelW - panelPadding * 2, height: galleryThumbHeight)
-        let (scrollView, thumbViews) = buildGalleryStrip(frame: galleryFrame, count: galleryCount)
-        visualEffect.addSubview(scrollView)
-        galleryScrollView = scrollView
-        galleryThumbViews = thumbViews
-
-        if galleryCount > 0 {
-            updateWindowSelection(selectedWindowIndex)
-        }
-    }
-
-    private func buildCombinedLayout(selectedAppIndex: Int, galleryCount: Int, selectedWindowIndex: Int) {
-        let itemWidth = iconSize + iconPadding
-        let panelW = frame.width
-        var y: CGFloat = panelPadding
-
-        // Bottom: Gallery thumbnail strip
-        let galSelBox = makeSelectionBox()
-        visualEffect.addSubview(galSelBox)
-        gallerySelectionBox = galSelBox
-
-        let galleryFrame = NSRect(x: panelPadding, y: y, width: panelW - panelPadding * 2, height: galleryThumbHeight)
-        let (galScrollView, thumbViews) = buildGalleryStrip(frame: galleryFrame, count: galleryCount)
-        visualEffect.addSubview(galScrollView)
-        galleryScrollView = galScrollView
-        galleryThumbViews = thumbViews
-        y += galleryThumbHeight + 12
-
-        // App icon strip above gallery
-        let appSelBox = makeSelectionBox()
-        visualEffect.addSubview(appSelBox)
-        appSelectionBox = appSelBox
-
-        let iconStripY = y + (itemWidth - iconSize) / 2
-        let scrollView = NSScrollView(frame: NSRect(x: panelPadding, y: iconStripY, width: panelW - panelPadding * 2, height: iconSize))
-        scrollView.drawsBackground = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autoresizingMask = [.width]
-
-        let clipView = NSClipView(frame: scrollView.bounds)
-        clipView.drawsBackground = false
-        scrollView.contentView = clipView
-
-        let docWidth = CGFloat(apps.count) * itemWidth
-        let docView = NSView(frame: NSRect(x: 0, y: 0, width: max(docWidth, scrollView.bounds.width), height: iconSize))
-        scrollView.documentView = docView
-
-        for (index, app) in apps.enumerated() {
-            let x = CGFloat(index) * itemWidth + (itemWidth - iconSize) / 2
-            let imageView = NSImageView(frame: NSRect(x: x, y: 0, width: iconSize, height: iconSize))
-            imageView.image = app.icon
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageView.wantsLayer = true
-            imageView.layer?.cornerRadius = 12
-            docView.addSubview(imageView)
-            iconViews.append(imageView)
-        }
-
-        visualEffect.addSubview(scrollView)
-        iconStripScrollView = scrollView
-
-        updateAppSelection(selectedAppIndex)
-        if galleryCount > 0 {
-            updateWindowSelection(selectedWindowIndex)
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func makeSelectionBox() -> NSView {
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        box.layer?.cornerRadius = 8
-        box.frame = .zero
-        return box
-    }
-
-    private func buildGalleryStrip(frame: NSRect, count: Int) -> (NSScrollView, [NSImageView]) {
-        let scrollView = NSScrollView(frame: frame)
-        scrollView.drawsBackground = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autoresizingMask = [.width]
-
-        let clipView = NSClipView(frame: scrollView.bounds)
-        clipView.drawsBackground = false
-        scrollView.contentView = clipView
-
-        let itemWidth = galleryThumbWidth + galleryThumbPadding
-        let totalContentWidth = CGFloat(count) * itemWidth
-        let docWidth = max(totalContentWidth, scrollView.bounds.width)
-        let docView = NSView(frame: NSRect(x: 0, y: 0, width: docWidth, height: frame.height))
-        scrollView.documentView = docView
-
-        // Center thumbnails when they fit within the visible width
-        let inset = totalContentWidth < frame.width ? (frame.width - totalContentWidth) / 2 : 0
-        galleryLeftInset = inset
-
-        var thumbViews: [NSImageView] = []
-        let thumbY = (frame.height - galleryThumbHeight) / 2
-        for i in 0..<count {
-            let x = inset + CGFloat(i) * itemWidth
-            let imageView = NSImageView(frame: NSRect(x: x, y: thumbY, width: galleryThumbWidth, height: galleryThumbHeight))
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageView.wantsLayer = true
-            imageView.layer?.cornerRadius = 6
-            imageView.layer?.borderWidth = 1
-            imageView.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
-            imageView.alphaValue = 0
-            docView.addSubview(imageView)
-            thumbViews.append(imageView)
-        }
-
-        return (scrollView, thumbViews)
-    }
-
-    private func galleryScrollViewFrame() -> NSRect? {
-        // Returns where the gallery scroll view should be based on current mode
-        guard let scrollView = galleryScrollView else {
-            // Estimate from mode
-            switch mode {
-            case .windowsOnly:
-                return NSRect(x: panelPadding, y: panelPadding, width: frame.width - panelPadding * 2, height: galleryThumbHeight)
-            case .combined:
-                return NSRect(x: panelPadding, y: panelPadding, width: frame.width - panelPadding * 2, height: galleryThumbHeight)
-            case .appsOnly:
-                return nil
-            }
-        }
-        return scrollView.frame
     }
 }

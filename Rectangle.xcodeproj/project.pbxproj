@@ -55,6 +55,7 @@
 		9824701422AF9B7E0037B409 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 9824701222AF9B7E0037B409 /* Main.storyboard */; };
 		9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824701F22AF9B7E0037B409 /* RectangleTests.swift */; };
 		AB24702022AF9B7E0037B409 /* ProjectSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB24701F22AF9B7E0037B409 /* ProjectSelectorTests.swift */; };
+		AC24702022AF9B7E0037B409 /* AppSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC24701F22AF9B7E0037B409 /* AppSelectorTests.swift */; };
 		9824702C22AFA22E0037B409 /* AccessibilityWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824702A22AFA22E0037B409 /* AccessibilityWindowController.swift */; };
 		9824702F22AFA2E50037B409 /* AccessibilityAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824702E22AFA2E50037B409 /* AccessibilityAuthorization.swift */; };
 		9824703122AFA8470037B409 /* RectangleStatusItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824703022AFA8470037B409 /* RectangleStatusItem.swift */; };
@@ -131,6 +132,12 @@
 		CC0004052F090018009C7BF6 /* GroupSelectorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004072F09001A009C7BF6 /* GroupSelectorWindow.swift */; };
 		CC0004062F090019009C7BF6 /* EditModeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004082F09001B009C7BF6 /* EditModeController.swift */; };
 		CC0004092F09001C009C7BF6 /* BoundingBoxWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00040A2F09001D009C7BF6 /* BoundingBoxWindow.swift */; };
+		AB24702222AF9B7F0037B409 /* CarouselBackdropPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB24702122AF9B7F0037B409 /* CarouselBackdropPanel.swift */; };
+		CC00040B2F09001E009C7BF6 /* AppSelectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00040C2F09001F009C7BF6 /* AppSelectorPanel.swift */; };
+		CC00040D2F090020009C7BF6 /* AppSelectorBackdrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00040E2F090021009C7BF6 /* AppSelectorBackdrop.swift */; };
+		CC00040F2F090022009C7BF6 /* AppSelectorGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004102F090023009C7BF6 /* AppSelectorGallery.swift */; };
+		CC0004112F090024009C7BF6 /* AppSelectorPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004122F090025009C7BF6 /* AppSelectorPreview.swift */; };
+		CC0004132F090026009C7BF6 /* AppSelectorRaise.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0004142F090027009C7BF6 /* AppSelectorRaise.swift */; };
 		98FA9497235A2D7600F95C4F /* RepeatedExecutionsCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FA9496235A2D7600F95C4F /* RepeatedExecutionsCalculation.swift */; };
 		98FD7C5F2687BC14009E9DAF /* FirstThreeFourthsCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FD7C5E2687BC14009E9DAF /* FirstThreeFourthsCalculation.swift */; };
 		98FD7C612687BCB6009E9DAF /* LastThreeFourthsCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98FD7C602687BCB6009E9DAF /* LastThreeFourthsCalculation.swift */; };
@@ -254,6 +261,7 @@
 		9824701B22AF9B7E0037B409 /* RectangleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RectangleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9824701F22AF9B7E0037B409 /* RectangleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RectangleTests.swift; sourceTree = "<group>"; };
 		AB24701F22AF9B7E0037B409 /* ProjectSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectSelectorTests.swift; sourceTree = "<group>"; };
+		AC24701F22AF9B7E0037B409 /* AppSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorTests.swift; sourceTree = "<group>"; };
 		9824702122AF9B7E0037B409 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		9824702A22AFA22E0037B409 /* AccessibilityWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AccessibilityWindowController.swift; sourceTree = "<group>"; };
 		9824702E22AFA2E50037B409 /* AccessibilityAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAuthorization.swift; sourceTree = "<group>"; };
@@ -329,6 +337,12 @@
 		CC0004072F09001A009C7BF6 /* GroupSelectorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupSelectorWindow.swift; sourceTree = "<group>"; };
 		CC0004082F09001B009C7BF6 /* EditModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditModeController.swift; sourceTree = "<group>"; };
 		CC00040A2F09001D009C7BF6 /* BoundingBoxWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundingBoxWindow.swift; sourceTree = "<group>"; };
+		AB24702122AF9B7F0037B409 /* CarouselBackdropPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarouselBackdropPanel.swift; sourceTree = "<group>"; };
+		CC00040C2F09001F009C7BF6 /* AppSelectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorPanel.swift; sourceTree = "<group>"; };
+		CC00040E2F090021009C7BF6 /* AppSelectorBackdrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorBackdrop.swift; sourceTree = "<group>"; };
+		CC0004102F090023009C7BF6 /* AppSelectorGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorGallery.swift; sourceTree = "<group>"; };
+		CC0004122F090025009C7BF6 /* AppSelectorPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorPreview.swift; sourceTree = "<group>"; };
+		CC0004142F090027009C7BF6 /* AppSelectorRaise.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSelectorRaise.swift; sourceTree = "<group>"; };
 		98FA9496235A2D7600F95C4F /* RepeatedExecutionsCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepeatedExecutionsCalculation.swift; sourceTree = "<group>"; };
 		98FD7C5E2687BC14009E9DAF /* FirstThreeFourthsCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstThreeFourthsCalculation.swift; sourceTree = "<group>"; };
 		98FD7C602687BCB6009E9DAF /* LastThreeFourthsCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LastThreeFourthsCalculation.swift; sourceTree = "<group>"; };
@@ -638,6 +652,7 @@
 			children = (
 				9824701F22AF9B7E0037B409 /* RectangleTests.swift */,
 				AB24701F22AF9B7E0037B409 /* ProjectSelectorTests.swift */,
+				AC24701F22AF9B7E0037B409 /* AppSelectorTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
 			path = RectangleTests;
@@ -711,10 +726,16 @@
 				CC0003032F090012009C7BF6 /* SelectorNode.swift */,
 				CC0003042F090013009C7BF6 /* WindowScreenshot.swift */,
 				CC0004032F090016009C7BF6 /* AppSelectorWindow.swift */,
+				CC00040C2F09001F009C7BF6 /* AppSelectorPanel.swift */,
+				CC00040E2F090021009C7BF6 /* AppSelectorBackdrop.swift */,
+				CC0004102F090023009C7BF6 /* AppSelectorGallery.swift */,
+				CC0004122F090025009C7BF6 /* AppSelectorPreview.swift */,
+				CC0004142F090027009C7BF6 /* AppSelectorRaise.swift */,
 				CC0004042F090017009C7BF6 /* WindowSelectorWindow.swift */,
 				CC0004072F09001A009C7BF6 /* GroupSelectorWindow.swift */,
 				CC0004082F09001B009C7BF6 /* EditModeController.swift */,
 				CC00040A2F09001D009C7BF6 /* BoundingBoxWindow.swift */,
+				AB24702122AF9B7F0037B409 /* CarouselBackdropPanel.swift */,
 			);
 			path = ModalMode;
 			sourceTree = "<group>";
@@ -1030,6 +1051,12 @@
 				CC0004052F090018009C7BF6 /* GroupSelectorWindow.swift in Sources */,
 				CC0004062F090019009C7BF6 /* EditModeController.swift in Sources */,
 				CC0004092F09001C009C7BF6 /* BoundingBoxWindow.swift in Sources */,
+				AB24702222AF9B7F0037B409 /* CarouselBackdropPanel.swift in Sources */,
+				CC00040B2F09001E009C7BF6 /* AppSelectorPanel.swift in Sources */,
+				CC00040D2F090020009C7BF6 /* AppSelectorBackdrop.swift in Sources */,
+				CC00040F2F090022009C7BF6 /* AppSelectorGallery.swift in Sources */,
+				CC0004112F090024009C7BF6 /* AppSelectorPreview.swift in Sources */,
+				CC0004132F090026009C7BF6 /* AppSelectorRaise.swift in Sources */,
 				B4780A322BD4C75900732B9E /* HalfOrDoubleDimensionCalculation.swift in Sources */,
 				AA69F83C29909A95001A81AF /* RightTodoCalculation.swift in Sources */,
 				AA49DD1129B8C1B100690E13 /* TitleBarManager.swift in Sources */,
@@ -1074,6 +1101,7 @@
 			files = (
 				9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */,
 				AB24702022AF9B7E0037B409 /* ProjectSelectorTests.swift in Sources */,
+				AC24702022AF9B7E0037B409 /* AppSelectorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
