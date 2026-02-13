@@ -39,7 +39,7 @@ class CarouselBackdropPanel: NSPanel {
 
         super.init(contentRect: panelRect,
                    styleMask: [.borderless, .nonactivatingPanel],
-                   backing: .buffered, defer: false)
+                   backing: .buffered, defer: true)
 
         isOpaque = false
         level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue - 1)

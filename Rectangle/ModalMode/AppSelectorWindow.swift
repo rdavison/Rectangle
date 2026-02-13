@@ -220,12 +220,29 @@ class AppSelectorWindow: SelectorNode {
             ModalModeManager.shared.deactivate(restoreLayout: false)
         }
         selectorPanel = panel
+
+        // Create backdrop first (if needed) so we can order windows correctly in one pass
+        var backdrop: CarouselBackdropPanel?
+        if hudMode == .appsOnly {
+            let bd = CarouselBackdropPanel(screen: context.screen)
+            let styles: [CarouselBackdropPanel.Style] = [.cascade, .expose, .ring]
+            bd.style = styles[min(Defaults.backdropStyle.value, styles.count - 1)]
+            backdropPanel = bd
+            backdrop = bd
+            bd.alphaValue = 0
+            bd.orderFront(nil)
+        }
+
+        // Show HUD above backdrop — single orderFront call
         panel.alphaValue = 0
         panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        // Fade in HUD + backdrop in a single animation group
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1.0
+            backdrop?.animator().alphaValue = 1.0
         }
 
         // Load gallery thumbnails async if gallery is visible
@@ -237,20 +254,8 @@ class AppSelectorWindow: SelectorNode {
         // Start refresh timer only when gallery is visible
         startRefreshTimerIfNeeded()
 
-        // Create 3D backdrop for appsOnly mode
-        if hudMode == .appsOnly {
-            let backdrop = CarouselBackdropPanel(screen: context.screen)
-            let styles: [CarouselBackdropPanel.Style] = [.cascade, .expose, .ring]
-            backdrop.style = styles[min(Defaults.backdropStyle.value, styles.count - 1)]
-            backdropPanel = backdrop
-            backdrop.alphaValue = 0
-            backdrop.orderFront(nil)
-            panel.orderFront(nil)  // keep HUD above backdrop
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                backdrop.animator().alphaValue = 1.0
-            }
+        // Kick off async screenshot capture for backdrop
+        if backdrop != nil {
             captureBackdropScreenshots()
             precacheAllAppScreenshots()
         }
@@ -280,25 +285,24 @@ class AppSelectorWindow: SelectorNode {
         cachedWindowList = []
         backdropWindows = []
         galleryWindows = []
-        backdropPanel?.orderOut(nil)
-        backdropPanel = nil
-
         if animated, let panel = selectorPanel {
+            let bd = backdropPanel
             selectorPanel = nil
-            animateDismiss(panel: panel)
+            backdropPanel = nil
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                panel.animator().alphaValue = 0
+                bd?.animator().alphaValue = 0
+            } completionHandler: {
+                panel.orderOut(nil)
+                bd?.orderOut(nil)
+            }
         } else {
             selectorPanel?.orderOut(nil)
             selectorPanel = nil
-        }
-    }
-
-    private func animateDismiss(panel: NSPanel) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        } completionHandler: {
-            panel.orderOut(nil)
+            backdropPanel?.orderOut(nil)
+            backdropPanel = nil
         }
     }
 

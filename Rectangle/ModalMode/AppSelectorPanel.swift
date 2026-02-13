@@ -57,7 +57,7 @@ class AppSelectorPanel: NSPanel {
             height: size.height
         )
 
-        super.init(contentRect: panelRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        super.init(contentRect: panelRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
 
         isOpaque = false
         level = .popUpMenu
