@@ -100,9 +100,13 @@ class AppSelectorWindow: SelectorNode {
     var galleryWindows: [WindowInfo] = []
     var gallerySelectedIndex: Int = 0
 
-    // 3D backdrop for appsOnly mode
-    private(set) var backdropPanel: CarouselBackdropPanel?
+    // Unified window stage (replaces backdropPanel + windowCarousel)
+    var windowStage: WindowStage?
+    var backdrop: BackdropPanel?
     var backdropWindows: [WindowInfo] = []
+
+    // Config saved from activate() for use in extensions
+    var config: WindowStage.Config!
 
     // Cached window list snapshots — taken once at activation, reused for tab switches.
     // onScreen has reliable z-order (.optionOnScreenOnly); all includes off-screen windows.
@@ -120,7 +124,6 @@ class AppSelectorWindow: SelectorNode {
 
     // Window preview state — tracks whether we're cycling windows with `
     var isPreviewingWindow: Bool = false
-    var windowCarousel: WindowCarousel?
     var previewRefreshTimer: Timer?
 
     // Generation counter — incremented on each selection change.
@@ -221,16 +224,20 @@ class AppSelectorWindow: SelectorNode {
         }
         selectorPanel = panel
 
-        // Create backdrop first (if needed) so we can order windows correctly in one pass
-        var backdrop: CarouselBackdropPanel?
+        // Create backdrop + window stage (if needed)
+        config = WindowStage.Config(screen: context.screen, hudLevel: .popUpMenu)
+        var bdPanel: BackdropPanel?
         if hudMode == .appsOnly {
-            let bd = CarouselBackdropPanel(screen: context.screen)
-            let styles: [CarouselBackdropPanel.Style] = [.cascade, .expose, .ring]
-            bd.style = styles[min(Defaults.backdropStyle.value, styles.count - 1)]
-            backdropPanel = bd
+            let bd = BackdropPanel(screen: context.screen)
             backdrop = bd
+            bdPanel = bd
             bd.alphaValue = 0
             bd.orderFront(nil)
+
+            let stage = WindowStage(config: config)
+            windowStage = stage
+            stage.show(windows: backdropWindows, layout: currentBackdropLayout,
+                       initialFrontIndex: 0, cache: screenshotCache, animated: false)
         }
 
         // Show HUD above backdrop — single orderFront call
@@ -242,7 +249,7 @@ class AppSelectorWindow: SelectorNode {
             ctx.duration = 0.12
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1.0
-            backdrop?.animator().alphaValue = 1.0
+            bdPanel?.animator().alphaValue = 1.0
         }
 
         // Load gallery thumbnails async if gallery is visible
@@ -255,7 +262,7 @@ class AppSelectorWindow: SelectorNode {
         startRefreshTimerIfNeeded()
 
         // Kick off async screenshot capture for backdrop
-        if backdrop != nil {
+        if bdPanel != nil {
             captureBackdropScreenshots()
             precacheAllAppScreenshots()
         }
@@ -277,8 +284,8 @@ class AppSelectorWindow: SelectorNode {
         isPreviewingWindow = false
         previewRefreshTimer?.invalidate()
         previewRefreshTimer = nil
-        windowCarousel?.tearDown(animated: false)
-        windowCarousel = nil
+        windowStage?.tearDown(animated: false)
+        windowStage = nil
         screenshotCache.removeAll()
         galleryElements.removeAll()
         cachedOnScreenWindowList = []
@@ -286,9 +293,9 @@ class AppSelectorWindow: SelectorNode {
         backdropWindows = []
         galleryWindows = []
         if animated, let panel = selectorPanel {
-            let bd = backdropPanel
+            let bd = backdrop
             selectorPanel = nil
-            backdropPanel = nil
+            backdrop = nil
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.12
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -301,8 +308,8 @@ class AppSelectorWindow: SelectorNode {
         } else {
             selectorPanel?.orderOut(nil)
             selectorPanel = nil
-            backdropPanel?.orderOut(nil)
-            backdropPanel = nil
+            backdrop?.orderOut(nil)
+            backdrop = nil
         }
     }
 
@@ -503,12 +510,10 @@ class AppSelectorWindow: SelectorNode {
                 activateApp(app)
             }
 
-            // Start fly-out animation on the 3D backdrop (only if not previewing)
-            if previewedWindow == nil, !backdropWindows.isEmpty, let backdrop = backdropPanel {
+            // Start fly-out animation on the window stage (only if not previewing)
+            if previewedWindow == nil, !backdropWindows.isEmpty, let stage = windowStage {
                 let windowFrames = backdropWindows.map { $0.frame }
-                backdrop.animateFlyout(windowFrames: windowFrames) { [weak backdrop] in
-                    backdrop?.orderOut(nil)
-                }
+                stage.flyOutAll(windowFrames: windowFrames) {}
             }
 
         case .windowsOnly, .combined:

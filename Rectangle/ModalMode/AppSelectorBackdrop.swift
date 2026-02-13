@@ -9,6 +9,13 @@ import Cocoa
 
 extension AppSelectorWindow {
 
+    /// The current backdrop layout based on user settings.
+    var currentBackdropLayout: WindowStage.Layout {
+        let styles: [WindowStage.Layout] = [.cascade, .expose, .ring]
+        let idx = min(Defaults.backdropStyle.value, styles.count - 1)
+        return styles[idx]
+    }
+
     func loadBackdropWindows(for appIndex: Int) {
         guard appIndex >= 0, appIndex < apps.count else {
             backdropWindows = []
@@ -26,30 +33,28 @@ extension AppSelectorWindow {
     func captureBackdropScreenshots(direction: CGFloat = 0) {
         let windows = backdropWindows
         guard !windows.isEmpty else {
-            backdropPanel?.setWindows([], animated: false)
+            // No windows — show empty stage
+            windowStage?.replaceWindows([], cache: [:], animated: false)
             return
         }
         let totalStart = CFAbsoluteTimeGetCurrent()
 
-        // Build layout immediately using cached images; use a 1x1 clear pixel
-        // as placeholder for uncached windows so the layout is correct from frame 1.
-        var screenshots: [(image: CGImage, windowFrame: CGRect)] = []
+        // Build cache with NSImage values for WindowStage
+        var imageCacheCG: [CGWindowID: CGImage] = [:]
         var uncachedIndices: [Int] = []
         for (i, win) in windows.enumerated() {
             if let cached = screenshotCache[win.id] {
-                screenshots.append((image: cached, windowFrame: win.frame))
+                imageCacheCG[win.id] = cached
             } else {
-                // Placeholder — correct frame, blank content
-                let placeholder = Self.placeholderImage
-                screenshots.append((image: placeholder, windowFrame: win.frame))
                 uncachedIndices.append(i)
             }
         }
 
-        backdropPanel?.setWindows(screenshots, animated: direction != 0, direction: direction)
+        windowStage?.replaceWindows(windows, cache: imageCacheCG,
+                                    animated: direction != 0, direction: direction)
         perfLog("[perf] captureBackdropScreenshots setup \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms (\(windows.count - uncachedIndices.count) cached, \(uncachedIndices.count) pending)")
 
-        // Capture uncached windows in the background, updating the backdrop as each arrives
+        // Capture uncached windows in the background, updating the stage as each arrives
         guard !uncachedIndices.isEmpty else { return }
         let gen = selectionGeneration
         let windowsToCapture = uncachedIndices.map { (index: $0, win: windows[$0]) }
@@ -66,7 +71,7 @@ extension AppSelectorWindow {
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self, self.selectionGeneration == gen else { return }
                         self.screenshotCache[wid] = cgImage
-                        self.backdropPanel?.updateThumbnail(cgImage, at: idx)
+                        self.windowStage?.updateImage(nsImage, at: idx)
                     }
                 }
             }
@@ -76,16 +81,6 @@ extension AppSelectorWindow {
             }
         }
     }
-
-    /// 1x1 transparent placeholder image, created once.
-    private static let placeholderImage: CGImage = {
-        let ctx = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8,
-                            bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
-                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.setFillColor(CGColor(gray: 0, alpha: 0))
-        ctx.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        return ctx.makeImage()!
-    }()
 
     /// Pre-cache screenshots for all apps so tab transitions are instant.
     func precacheAllAppScreenshots() {
