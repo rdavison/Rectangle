@@ -473,9 +473,13 @@ class AppSelectorWindow: SelectorNode {
     private func confirmSelection() {
         pruneTerminatedApps()
 
+        // Snapshot preview state before animatePreviewFlyout clears it
+        let wasPreviewing = isPreviewingWindow
+        let previewedWindow: WindowInfo? = (wasPreviewing && gallerySelectedIndex >= 0 && gallerySelectedIndex < galleryWindows.count)
+            ? galleryWindows[gallerySelectedIndex] : nil
+
         // Animate preview overlay to the target window's position before dismissing
-        if isPreviewingWindow, gallerySelectedIndex >= 0, gallerySelectedIndex < galleryWindows.count {
-            let win = galleryWindows[gallerySelectedIndex]
+        if let win = previewedWindow {
             animatePreviewFlyout(to: win)
         }
 
@@ -486,22 +490,22 @@ class AppSelectorWindow: SelectorNode {
             guard !app.isTerminated else { return }
 
             // If the user was previewing a specific window (via Cmd+`), raise it
-            if isPreviewingWindow, gallerySelectedIndex >= 0, gallerySelectedIndex < galleryWindows.count {
-                let win = galleryWindows[gallerySelectedIndex]
+            if let win = previewedWindow {
                 if let element = galleryElements[win.id] {
                     element.performAction(kAXRaiseAction as String)
                 }
+                NSRunningApplication(processIdentifier: win.pid)?.activate(options: .activateIgnoringOtherApps)
+            } else {
+                activateApp(app)
             }
 
-            // Start fly-out animation on the 3D backdrop
-            if !backdropWindows.isEmpty, let backdrop = backdropPanel {
+            // Start fly-out animation on the 3D backdrop (only if not previewing)
+            if previewedWindow == nil, !backdropWindows.isEmpty, let backdrop = backdropPanel {
                 let windowFrames = backdropWindows.map { $0.frame }
                 backdrop.animateFlyout(windowFrames: windowFrames) { [weak backdrop] in
                     backdrop?.orderOut(nil)
                 }
             }
-
-            activateApp(app)
 
         case .windowsOnly, .combined:
             guard gallerySelectedIndex >= 0, gallerySelectedIndex < galleryWindows.count else { return }

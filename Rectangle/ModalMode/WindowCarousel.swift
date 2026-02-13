@@ -81,15 +81,16 @@ class WindowCarousel {
     // MARK: - Pose Computation
 
     /// Compute the carousel pose for angle θ on the elliptical orbit.
-    static func computePose(theta: CGFloat, config: Config, direction: CGFloat) -> Pose {
+    /// The ellipse shape is fixed — direction only affects which way angles rotate.
+    static func computePose(theta: CGFloat, config: Config) -> Pose {
         let cosθ = cos(theta)
         let sinθ = sin(theta)
-        let cx = config.centerX - direction * config.aRadius * sinθ
+        let cx = config.centerX + config.aRadius * sinθ
         let cy = config.centerY + config.bRadius * cosθ
         let scale = (1 + cosθ) / 2 * (1 - config.backScale) + config.backScale
         let w = config.baseW * scale
         let h = config.baseH * scale
-        let alpha = (1 + cosθ) / 2 * 0.6 + 0.4
+        let alpha: CGFloat = 1.0
         let isFront = cosθ > 0
         return Pose(
             frame: NSRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h),
@@ -169,7 +170,7 @@ class WindowCarousel {
         panels = (0..<panelCount).map { _ in makePanel() }
 
         // Apply initial poses
-        assignPanels(direction: 1)
+        assignPanels()
         for panel in panels {
             panel.orderFront(nil)
         }
@@ -207,7 +208,7 @@ class WindowCarousel {
         let panelCount = min(n, maxPanels)
         panels = (0..<panelCount).map { _ in makePanel() }
 
-        assignPanels(direction: 1)
+        assignPanels()
         for panel in panels {
             panel.orderFront(nil)
         }
@@ -228,13 +229,13 @@ class WindowCarousel {
             for i in self.slots.indices {
                 self.slots[i].angle = startAngles[i] - .pi * t
             }
-            self.assignPanels(direction: 1)
+            self.assignPanels()
 
             if raw >= 1.0 {
                 timer.invalidate()
                 self.animationTimer = nil
                 self.normalizeAngles()
-                self.assignPanels(direction: 1)
+                self.assignPanels()
                 self.logSlotState("setUpWithEntryAnimation (end)")
             }
         }
@@ -255,7 +256,9 @@ class WindowCarousel {
 
         let n = slots.count
         let angleStep = 2 * CGFloat.pi / CGFloat(n)
-        let delta = direction * angleStep  // positive direction = rotate forward
+        // Negate: direction=1 (forward) subtracts from angles, bringing the next
+        // slot (higher index) to θ=0.
+        let delta = -direction * angleStep
 
         let startTime = CACurrentMediaTime()
         let startAngles = slots.map { $0.angle }
@@ -270,19 +273,20 @@ class WindowCarousel {
             for i in self.slots.indices {
                 self.slots[i].angle = startAngles[i] + delta * t
             }
-            self.assignPanels(direction: direction)
+            self.assignPanels()
 
             if raw >= 1.0 {
                 timer.invalidate()
                 self.animationTimer = nil
                 self.normalizeAngles()
                 self.updateFrontSlotIndex()
-                self.assignPanels(direction: direction)
+                self.assignPanels()
                 self.logSlotState("cycle (end, dir=\(direction))")
             }
         }
 
-        // Eagerly update front slot index for callers
+        // Eagerly update front slot index for callers.
+        // direction=1 (forward) brings the next slot to front.
         let nextFront: Int
         if direction > 0 {
             nextFront = (frontSlotIndex + 1) % n
@@ -392,29 +396,34 @@ class WindowCarousel {
 
     // MARK: - Panel Assignment
 
-    /// Sort slots by proximity to front (θ=0), assign the nearest `maxPanels` to visible panels.
-    private func assignPanels(direction: CGFloat) {
+    /// Update each panel's pose from its fixed slot (slot[i] → panel[i]),
+    /// then re-stack panels back-to-front for correct z-ordering.
+    private func assignPanels() {
         guard !slots.isEmpty, !panels.isEmpty else { return }
 
-        // Compute a sort key: absolute angular distance from 0 (normalized to [0, π])
-        let indexed = slots.enumerated().map { (index: $0.offset, slot: $0.element, dist: angularDistanceFromFront($0.element.angle)) }
-        let sorted = indexed.sorted { $0.dist < $1.dist }
-
-        // Assign the nearest slots to panels; sort by angle for correct z-ordering
-        let visible = Array(sorted.prefix(panels.count))
-        let byAngle = visible.sorted { $0.slot.angle < $1.slot.angle }
-
-        for (panelIndex, item) in byAngle.enumerated() {
-            let pose = Self.computePose(theta: item.slot.angle, config: config, direction: direction)
-            let panel = panels[panelIndex]
+        // Fixed 1:1 mapping: panel[i] always shows slot[i].
+        // Extra slots beyond maxPanels have no panel (hidden).
+        for i in 0..<panels.count {
+            let slot = slots[i]
+            let pose = Self.computePose(theta: slot.angle, config: config)
+            let panel = panels[i]
 
             panel.setFrame(pose.frame, display: true)
             panel.alphaValue = pose.alpha
             panel.level = pose.isFront ? Self.frontLevel : Self.backLevel
 
             if let imageView = panel.contentView?.subviews.first as? NSImageView {
-                imageView.image = item.slot.cachedImage
+                imageView.image = slot.cachedImage
             }
+        }
+
+        // Re-stack panels back-to-front: sort by angular distance (farthest first),
+        // then order each above the previous so the front panel is on top.
+        let byDepth = (0..<panels.count).sorted {
+            angularDistanceFromFront(slots[$0].angle) > angularDistanceFromFront(slots[$1].angle)
+        }
+        for j in 1..<byDepth.count {
+            panels[byDepth[j]].order(.above, relativeTo: panels[byDepth[j - 1]].windowNumber)
         }
     }
 
@@ -437,9 +446,8 @@ class WindowCarousel {
 
     /// Find the panel currently showing the front slot.
     private func findFrontPanel() -> NSPanel? {
-        guard !panels.isEmpty else { return nil }
-        // Front panel is the one at frontLevel with highest alpha
-        return panels.max(by: { $0.alphaValue < $1.alphaValue })
+        guard frontSlotIndex < panels.count else { return nil }
+        return panels[frontSlotIndex]
     }
 
     // MARK: - Angle Helpers
