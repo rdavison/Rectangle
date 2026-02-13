@@ -120,10 +120,8 @@ class AppSelectorWindow: SelectorNode {
 
     // Window preview state — tracks whether we're cycling windows with `
     var isPreviewingWindow: Bool = false
-    var previewOverlay: NSPanel?
+    var windowCarousel: WindowCarousel?
     var previewRefreshTimer: Timer?
-    var carouselTimer: Timer?
-    var carouselOutgoing: NSPanel?
 
     // Generation counter — incremented on each selection change.
     // Background callbacks capture the current generation and check it before
@@ -274,12 +272,8 @@ class AppSelectorWindow: SelectorNode {
         isPreviewingWindow = false
         previewRefreshTimer?.invalidate()
         previewRefreshTimer = nil
-        carouselTimer?.invalidate()
-        carouselTimer = nil
-        carouselOutgoing?.orderOut(nil)
-        carouselOutgoing = nil
-        previewOverlay?.orderOut(nil)
-        previewOverlay = nil
+        windowCarousel?.tearDown(animated: false)
+        windowCarousel = nil
         screenshotCache.removeAll()
         galleryElements.removeAll()
         cachedOnScreenWindowList = []
