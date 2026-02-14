@@ -34,12 +34,55 @@ class WindowStage {
         let shadowRadius: CGFloat
     }
 
-    /// One slot per window.
-    private struct Slot {
+    /// A single unit combining the NSPanel, its NSImageView, and window data.
+    /// Eliminates parallel-array tracking — the container and thumbnail are one object.
+    private class StagePanel {
+        let panel: NSPanel
+        let imageView: NSImageView
         let windowInfo: WindowInfo
-        var cachedImage: NSImage?
-        var angle: CGFloat        // used by carousel mode
+        var angle: CGFloat = 0        // used by carousel mode
         var wasFront: Bool = false
+
+        var cachedImage: NSImage? {
+            didSet { imageView.image = cachedImage }
+        }
+
+        init(windowInfo: WindowInfo, image: NSImage?, backLevel: NSWindow.Level) {
+            self.windowInfo = windowInfo
+
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                                styleMask: [.borderless, .nonactivatingPanel],
+                                backing: .buffered, defer: true)
+            panel.isOpaque = false
+            panel.level = backLevel
+            panel.hasShadow = false
+            panel.isReleasedWhenClosed = false
+            panel.backgroundColor = .clear
+            panel.ignoresMouseEvents = true
+            panel.collectionBehavior = [.transient, .canJoinAllSpaces]
+
+            let container = NSView()
+            container.wantsLayer = true
+            container.layer?.shadowColor = NSColor.black.cgColor
+            container.layer?.shadowOpacity = 0.5
+            container.layer?.shadowRadius = 20
+            container.layer?.shadowOffset = CGSize(width: 0, height: -4)
+            container.autoresizingMask = [.width, .height]
+            panel.contentView = container
+
+            let imageView = NSImageView(frame: container.bounds)
+            imageView.image = image
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            imageView.wantsLayer = true
+            imageView.layer?.cornerRadius = 10
+            imageView.layer?.masksToBounds = true
+            imageView.autoresizingMask = [.width, .height]
+            container.addSubview(imageView)
+
+            self.panel = panel
+            self.imageView = imageView
+            self.cachedImage = image
+        }
     }
 
     // MARK: - Public State
@@ -49,18 +92,17 @@ class WindowStage {
     var isAnimating: Bool { animRunning }
 
     var frontWindow: WindowInfo? {
-        guard !slots.isEmpty, frontSlotIndex < slots.count else { return nil }
-        return slots[frontSlotIndex].windowInfo
+        guard !stagePanels.isEmpty, frontSlotIndex < stagePanels.count else { return nil }
+        return stagePanels[frontSlotIndex].windowInfo
     }
 
-    var isEmpty: Bool { slots.isEmpty }
-    var windowCount: Int { slots.count }
+    var isEmpty: Bool { stagePanels.isEmpty }
+    var windowCount: Int { stagePanels.count }
 
     // MARK: - Private State
 
     private let maxPanels = 8
-    private var panels: [NSPanel] = []
-    private var slots: [Slot] = []
+    private var stagePanels: [StagePanel] = []
     private var config: Config
 
     // Window levels
@@ -114,41 +156,41 @@ class WindowStage {
         if layout == .carousel {
             computeCarouselGeometry()
             let angleStep = 2 * CGFloat.pi / CGFloat(n)
-            slots = (0..<n).map { i in
+            stagePanels = (0..<n).map { i in
                 let win = windows[i]
                 let offsetFromFront = (i - initialFrontIndex + n) % n
                 let finalAngle = CGFloat(offsetFromFront) * angleStep
                 let startAngle = animated ? finalAngle + .pi : finalAngle
                 let nsImage = imageFromCache(win.id, cache: cache)
-                return Slot(windowInfo: win, cachedImage: nsImage, angle: startAngle, wasFront: false)
+                let sp = StagePanel(windowInfo: win, image: nsImage, backLevel: backLevel)
+                sp.angle = startAngle
+                return sp
             }
             frontSlotIndex = initialFrontIndex
 
-            panels = (0..<n).map { i in makePanel(image: slots[i].cachedImage) }
             updatePanelPosesCarousel()
-            for panel in panels { panel.orderFront(nil) }
+            for sp in stagePanels { sp.panel.orderFront(nil) }
 
             if animated {
                 animStartTime = CACurrentMediaTime()
                 animDuration = 0.35
-                animStartAngles = slots.map { $0.angle }
-                animDeltaPerSlot = Array(repeating: -.pi, count: slots.count)
+                animStartAngles = stagePanels.map { $0.angle }
+                animDeltaPerSlot = Array(repeating: -.pi, count: stagePanels.count)
                 animIsTransition = false
                 animRunning = true
                 startDisplayLink()
             }
         } else {
-            slots = (0..<n).map { i in
+            stagePanels = (0..<n).map { i in
                 let win = windows[i]
                 let nsImage = imageFromCache(win.id, cache: cache)
-                return Slot(windowInfo: win, cachedImage: nsImage, angle: 0, wasFront: false)
+                return StagePanel(windowInfo: win, image: nsImage, backLevel: backLevel)
             }
             frontSlotIndex = initialFrontIndex
 
-            panels = (0..<n).map { i in makePanel(image: slots[i].cachedImage) }
             let poses = computeBackdropPoses()
             applyPoses(poses, animated: false)
-            for panel in panels { panel.orderFront(nil) }
+            for sp in stagePanels { sp.panel.orderFront(nil) }
 
             if animated && direction != 0 {
                 slideInBackdrop(direction: direction)
@@ -159,11 +201,11 @@ class WindowStage {
     // MARK: - Transition Between Modes
 
     func transitionTo(_ newLayout: Layout, animated: Bool, frontIndex: Int? = nil) {
-        guard !slots.isEmpty else { return }
+        guard !stagePanels.isEmpty else { return }
         let oldLayout = layout
 
         // Update front slot if caller specified one
-        if let idx = frontIndex, idx >= 0, idx < slots.count {
+        if let idx = frontIndex, idx >= 0, idx < stagePanels.count {
             frontSlotIndex = idx
         }
 
@@ -186,21 +228,19 @@ class WindowStage {
         // Compute target poses
         let toPoses: [PanelPose]
         if newLayout == .carousel {
-            // Set up carousel angles for target
-            let n = slots.count
+            let n = stagePanels.count
             let angleStep = 2 * CGFloat.pi / CGFloat(n)
             for i in 0..<n {
                 let offsetFromFront = (i - frontSlotIndex + n) % n
-                slots[i].angle = CGFloat(offsetFromFront) * angleStep
+                stagePanels[i].angle = CGFloat(offsetFromFront) * angleStep
             }
             toPoses = currentCarouselPoses()
         } else {
             toPoses = computeBackdropPoses()
         }
 
-        if animated && panels.count == toPoses.count {
-            // Disable shadows during transition
-            for panel in panels { panel.hasShadow = false }
+        if animated && stagePanels.count == toPoses.count {
+            for sp in stagePanels { sp.panel.hasShadow = false }
 
             animFromPoses = fromPoses
             animToPoses = toPoses
@@ -224,28 +264,35 @@ class WindowStage {
         }
 
         let n = min(windows.count, maxPanels)
+        // Remove excess panels
+        while stagePanels.count > n {
+            stagePanels.removeLast().panel.orderOut(nil)
+        }
 
-        // Rebuild slots preserving layout
-        slots = (0..<n).map { i in
+        // Reuse or create panels
+        for i in 0..<n {
             let win = windows[i]
             let nsImage = imageFromCache(win.id, cache: cache)
-            return Slot(windowInfo: win, cachedImage: nsImage, angle: 0, wasFront: false)
+            if i < stagePanels.count {
+                // Reuse: update data on existing StagePanel
+                // Note: windowInfo is let, so we must replace the StagePanel
+                let sp = StagePanel(windowInfo: win, image: nsImage, backLevel: backLevel)
+                stagePanels[i].panel.orderOut(nil)
+                stagePanels[i] = sp
+                sp.panel.orderFront(nil)
+            } else {
+                let sp = StagePanel(windowInfo: win, image: nsImage, backLevel: backLevel)
+                sp.panel.orderFront(nil)
+                stagePanels.append(sp)
+            }
         }
         frontSlotIndex = 0
-
-        // Ensure correct panel count
-        adjustPanelCount(to: n)
-
-        // Update images
-        for i in 0..<n {
-            setImage(slots[i].cachedImage, onPanel: panels[i])
-        }
 
         if layout == .carousel {
             computeCarouselGeometry()
             let angleStep = 2 * CGFloat.pi / CGFloat(n)
             for i in 0..<n {
-                slots[i].angle = CGFloat(i) * angleStep
+                stagePanels[i].angle = CGFloat(i) * angleStep
             }
             updatePanelPosesCarousel()
         } else {
@@ -261,7 +308,8 @@ class WindowStage {
     // MARK: - Carousel Cycling
 
     func cycle(direction: CGFloat, duration: TimeInterval = 0.35) {
-        guard layout == .carousel, slots.count > 1 else { return }
+        guard layout == .carousel, stagePanels.count > 1 else { return }
+        let n = stagePanels.count
 
         // Cancel any in-progress animation, snap to current interpolated positions
         if animRunning {
@@ -270,15 +318,14 @@ class WindowStage {
             normalizeAngles()
         }
 
-        let n = slots.count
         let angleStep = 2 * CGFloat.pi / CGFloat(n)
         let delta = -direction * angleStep
 
-        for panel in panels { panel.hasShadow = false }
+        for sp in stagePanels { sp.panel.hasShadow = false }
 
         animStartTime = CACurrentMediaTime()
         animDuration = duration
-        animStartAngles = slots.map { $0.angle }
+        animStartAngles = stagePanels.map { $0.angle }
         animDeltaPerSlot = Array(repeating: delta, count: n)
         animIsTransition = false
         animRunning = true
@@ -299,62 +346,51 @@ class WindowStage {
         stopDisplayLink()
 
         if animated {
-            let panelsToRemove = panels
+            let toRemove = stagePanels
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.12
-                for panel in panelsToRemove {
-                    panel.animator().alphaValue = 0
+                for sp in toRemove {
+                    sp.panel.animator().alphaValue = 0
                 }
             }, completionHandler: {
-                for panel in panelsToRemove {
-                    panel.orderOut(nil)
+                for sp in toRemove {
+                    sp.panel.orderOut(nil)
                 }
             })
         } else {
-            for panel in panels {
-                panel.orderOut(nil)
+            for sp in stagePanels {
+                sp.panel.orderOut(nil)
             }
         }
 
-        panels = []
-        slots = []
+        stagePanels = []
         frontSlotIndex = 0
     }
 
     private func tearDownImmediate() {
         animRunning = false
         stopDisplayLink()
-        for panel in panels { panel.orderOut(nil) }
-        panels = []
-        slots = []
+        for sp in stagePanels { sp.panel.orderOut(nil) }
+        stagePanels = []
         frontSlotIndex = 0
     }
 
     // MARK: - Image Updates
 
     func updateImage(_ image: NSImage, forWindowID windowID: CGWindowID) {
-        guard let i = slots.firstIndex(where: { $0.windowInfo.id == windowID }) else { return }
-        slots[i].cachedImage = image
-        if i < panels.count {
-            setImage(image, onPanel: panels[i])
-        }
+        guard let sp = stagePanels.first(where: { $0.windowInfo.id == windowID }) else { return }
+        sp.cachedImage = image
     }
 
     func updateFrontImage(_ image: NSImage) {
-        guard !slots.isEmpty, frontSlotIndex < slots.count else { return }
-        slots[frontSlotIndex].cachedImage = image
-        if frontSlotIndex < panels.count {
-            setImage(image, onPanel: panels[frontSlotIndex])
-        }
+        guard !stagePanels.isEmpty, frontSlotIndex < stagePanels.count else { return }
+        stagePanels[frontSlotIndex].cachedImage = image
     }
 
     /// Update image at a specific slot index (for backdrop mode where index == display order).
     func updateImage(_ image: NSImage, at index: Int) {
-        guard index >= 0, index < slots.count else { return }
-        slots[index].cachedImage = image
-        if index < panels.count {
-            setImage(image, onPanel: panels[index])
-        }
+        guard index >= 0, index < stagePanels.count else { return }
+        stagePanels[index].cachedImage = image
     }
 
     // MARK: - Fly-out Animations
@@ -364,27 +400,26 @@ class WindowStage {
         animRunning = false
         stopDisplayLink()
 
-        guard !panels.isEmpty else {
+        guard !stagePanels.isEmpty else {
             completion()
             return
         }
 
-        let frontPanel = frontSlotIndex < panels.count ? panels[frontSlotIndex] : nil
-        let otherPanels = panels.filter { $0 !== frontPanel }
+        let frontSP = frontSlotIndex < stagePanels.count ? stagePanels[frontSlotIndex] : nil
 
-        NSAnimationContext.runAnimationGroup({ ctx in
+        NSAnimationContext.runAnimationGroup({ [weak self] ctx in
+            guard let self = self else { return }
             ctx.duration = 0.3
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            frontPanel?.animator().setFrame(targetRect, display: true)
-            frontPanel?.animator().alphaValue = 0
-            for panel in otherPanels {
-                panel.animator().alphaValue = 0
+            frontSP?.panel.animator().setFrame(targetRect, display: true)
+            frontSP?.panel.animator().alphaValue = 0
+            for sp in self.stagePanels where sp !== frontSP {
+                sp.panel.animator().alphaValue = 0
             }
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
-            for panel in self.panels { panel.orderOut(nil) }
-            self.panels = []
-            self.slots = []
+            for sp in self.stagePanels { sp.panel.orderOut(nil) }
+            self.stagePanels = []
             completion()
         })
     }
@@ -394,91 +429,37 @@ class WindowStage {
         animRunning = false
         stopDisplayLink()
 
-        guard !panels.isEmpty else {
+        guard !stagePanels.isEmpty else {
             completion()
             return
         }
 
         let mainScreenH = NSScreen.screens.first?.frame.height ?? 1080
 
-        NSAnimationContext.runAnimationGroup({ ctx in
+        NSAnimationContext.runAnimationGroup({ [weak self] ctx in
+            guard let self = self else { return }
             ctx.duration = 0.35
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            for i in 0..<min(panels.count, windowFrames.count) {
+            for i in 0..<min(self.stagePanels.count, windowFrames.count) {
                 let target = windowFrames[i]
-                // Convert CG coords to Cocoa coords
                 let cocoaRect = NSRect(
                     x: target.origin.x,
                     y: mainScreenH - target.origin.y - target.height,
                     width: target.width,
                     height: target.height
                 )
-                panels[i].animator().setFrame(cocoaRect, display: true)
-                panels[i].animator().alphaValue = 0
+                self.stagePanels[i].panel.animator().setFrame(cocoaRect, display: true)
+                self.stagePanels[i].panel.animator().alphaValue = 0
             }
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
-            for panel in self.panels { panel.orderOut(nil) }
-            self.panels = []
-            self.slots = []
+            for sp in self.stagePanels { sp.panel.orderOut(nil) }
+            self.stagePanels = []
             completion()
         })
     }
 
-    // MARK: - Panel Factory
-
-    private func makePanel(image: NSImage?) -> NSPanel {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered, defer: true)
-        panel.isOpaque = false
-        panel.level = backLevel
-        panel.hasShadow = false
-        panel.isReleasedWhenClosed = false
-        panel.backgroundColor = .clear
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.transient, .canJoinAllSpaces]
-
-        let imageView = NSImageView()
-        imageView.image = image
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = 10
-        imageView.layer?.masksToBounds = true
-        imageView.autoresizingMask = [.width, .height]
-
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.shadowColor = NSColor.black.cgColor
-        container.layer?.shadowOpacity = 0.5
-        container.layer?.shadowRadius = 20
-        container.layer?.shadowOffset = CGSize(width: 0, height: -4)
-        container.autoresizingMask = [.width, .height]
-        container.addSubview(imageView)
-
-        panel.contentView = container
-        return panel
-    }
-
-    private func setImage(_ image: NSImage?, onPanel panel: NSPanel) {
-        if let imageView = panel.contentView?.subviews.first as? NSImageView {
-            imageView.image = image
-        }
-    }
-
-    private func adjustPanelCount(to n: Int) {
-        while panels.count > n {
-            let p = panels.removeLast()
-            p.orderOut(nil)
-        }
-        while panels.count < n {
-            let i = panels.count
-            let img = i < slots.count ? slots[i].cachedImage : nil
-            let p = makePanel(image: img)
-            p.orderFront(nil)
-            panels.append(p)
-        }
-    }
+    // MARK: - Helpers
 
     private func imageFromCache(_ windowID: CGWindowID, cache: [CGWindowID: CGImage]) -> NSImage? {
         guard let cg = cache[windowID] else { return nil }
@@ -497,8 +478,8 @@ class WindowStage {
 
         // Use front window's aspect ratio if available, else assume 16:9
         let aspect: CGFloat
-        if !slots.isEmpty, frontSlotIndex < slots.count {
-            let f = slots[frontSlotIndex].windowInfo.frame
+        if !stagePanels.isEmpty, frontSlotIndex < stagePanels.count {
+            let f = stagePanels[frontSlotIndex].windowInfo.frame
             aspect = f.width / max(f.height, 1)
         } else {
             aspect = 16.0 / 9.0
@@ -536,9 +517,9 @@ class WindowStage {
     }
 
     private func currentCarouselPoses() -> [PanelPose] {
-        return slots.enumerated().map { i, slot in
-            let (frame, isFront, alpha) = computeCarouselFrame(theta: slot.angle)
-            let distFromFront = angularDistFromFront(slot.angle)
+        return stagePanels.enumerated().map { i, sp in
+            let (frame, isFront, alpha) = computeCarouselFrame(theta: sp.angle)
+            let distFromFront = angularDistFromFront(sp.angle)
             return PanelPose(
                 frame: frame,
                 alpha: alpha,
@@ -551,31 +532,34 @@ class WindowStage {
     }
 
     private func updatePanelPosesCarousel() {
-        let n = min(panels.count, slots.count)
+        let n = stagePanels.count
         guard n > 0 else { return }
+
+        // Batch all panel changes so they appear atomically on screen
+        for sp in stagePanels { sp.panel.disableScreenUpdatesUntilFlush() }
 
         var zOrderChanged = false
 
         for i in 0..<n {
-            let (frame, isFront, alpha) = computeCarouselFrame(theta: slots[i].angle)
-            let panel = panels[i]
+            let sp = stagePanels[i]
+            let (frame, isFront, alpha) = computeCarouselFrame(theta: sp.angle)
 
-            panel.setFrame(frame, display: false)
-            panel.alphaValue = alpha
-            panel.level = isFront ? frontLevel : backLevel
+            sp.panel.setFrame(frame, display: false)
+            sp.panel.alphaValue = alpha
+            sp.panel.level = isFront ? frontLevel : backLevel
 
-            if slots[i].wasFront != isFront {
-                slots[i].wasFront = isFront
+            if sp.wasFront != isFront {
+                sp.wasFront = isFront
                 zOrderChanged = true
             }
         }
 
         if zOrderChanged {
             let byDepth = (0..<n).sorted {
-                angularDistFromFront(slots[$0].angle) > angularDistFromFront(slots[$1].angle)
+                angularDistFromFront(stagePanels[$0].angle) > angularDistFromFront(stagePanels[$1].angle)
             }
             for j in 1..<byDepth.count {
-                panels[byDepth[j]].order(.above, relativeTo: panels[byDepth[j - 1]].windowNumber)
+                stagePanels[byDepth[j]].panel.order(.above, relativeTo: stagePanels[byDepth[j - 1]].panel.windowNumber)
             }
         }
     }
@@ -599,7 +583,7 @@ class WindowStage {
     }
 
     private func cascadePoses(visFrame: NSRect) -> [PanelPose] {
-        let count = slots.count
+        let count = stagePanels.count
         guard count > 0 else { return [] }
 
         let availableW = visFrame.width * 0.85
@@ -609,8 +593,11 @@ class WindowStage {
         let cx = visFrame.midX
         let cy = visFrame.minY + visFrame.height * 0.62
 
+        // Center window 0 in the middle slot; overflow wraps cyclically
+        let half = count / 2
+
         return (0..<count).map { i in
-            let winFrame = slots[i].windowInfo.frame
+            let winFrame = stagePanels[i].windowInfo.frame
             let aspect = winFrame.width / max(winFrame.height, 1)
             let w: CGFloat, h: CGFloat
             if aspect > maxCardW / maxCardH {
@@ -619,9 +606,10 @@ class WindowStage {
                 h = maxCardH; w = maxCardH * aspect
             }
 
+            let slot = (i + half) % count
             let totalW = CGFloat(count) * (maxCardW + 16) - 16
             let startX = cx - totalW / 2
-            let cardCX = startX + (CGFloat(i) + 0.5) * (maxCardW + 16)
+            let cardCX = startX + (CGFloat(slot) + 0.5) * (maxCardW + 16)
 
             return PanelPose(
                 frame: NSRect(x: cardCX - w / 2, y: cy - h / 2, width: w, height: h),
@@ -635,7 +623,7 @@ class WindowStage {
     }
 
     private func exposePoses(visFrame: NSRect) -> [PanelPose] {
-        let count = slots.count
+        let count = stagePanels.count
         guard count > 0 else { return [] }
 
         let sceneW = visFrame.width * 0.85
@@ -668,7 +656,7 @@ class WindowStage {
         return (0..<count).map { i in
             let col = i % cols
             let row = i / cols
-            let winFrame = slots[i].windowInfo.frame
+            let winFrame = stagePanels[i].windowInfo.frame
 
             let aspect = winFrame.width / max(winFrame.height, 1)
             let maxW = cellW - padding
@@ -697,7 +685,7 @@ class WindowStage {
     private func ringPoses(visFrame: NSRect) -> [PanelPose] {
         let cardMaxW: CGFloat = 300
         let cardMaxH: CGFloat = 220
-        let count = slots.count
+        let count = stagePanels.count
         guard count > 0 else { return [] }
 
         let radius: CGFloat = min(max(CGFloat(count) * 40, 250), 400)
@@ -705,7 +693,7 @@ class WindowStage {
         let cy = visFrame.minY + visFrame.height * 0.72
 
         return (0..<count).map { i in
-            let winFrame = slots[i].windowInfo.frame
+            let winFrame = stagePanels[i].windowInfo.frame
             let aspect = winFrame.width / max(winFrame.height, 1)
             let w: CGFloat, h: CGFloat
             if aspect > cardMaxW / cardMaxH {
@@ -741,12 +729,15 @@ class WindowStage {
     // MARK: - Apply Poses
 
     private func applyPoses(_ poses: [PanelPose], animated: Bool) {
-        let n = min(panels.count, poses.count)
+        let n = min(stagePanels.count, poses.count)
         guard n > 0 else { return }
+
+        // Batch all panel changes so they appear atomically on screen
+        for i in 0..<n { stagePanels[i].panel.disableScreenUpdatesUntilFlush() }
 
         for i in 0..<n {
             let pose = poses[i]
-            let panel = panels[i]
+            let panel = stagePanels[i].panel
 
             panel.setFrame(pose.frame, display: false)
             panel.alphaValue = pose.alpha
@@ -757,7 +748,7 @@ class WindowStage {
         // Stack by zOrder (lowest first = back)
         let sorted = (0..<n).sorted { poses[$0].zOrder < poses[$1].zOrder }
         for j in 1..<sorted.count {
-            panels[sorted[j]].order(.above, relativeTo: panels[sorted[j - 1]].windowNumber)
+            stagePanels[sorted[j]].panel.order(.above, relativeTo: stagePanels[sorted[j - 1]].panel.windowNumber)
         }
     }
 
@@ -789,7 +780,7 @@ class WindowStage {
 
     private func slideInBackdrop(direction: CGFloat) {
         let poses = computeBackdropPoses()
-        let n = min(panels.count, poses.count)
+        let n = min(stagePanels.count, poses.count)
         guard n > 0 else { return }
 
         // Build "from" poses offset by direction
@@ -867,8 +858,8 @@ class WindowStage {
             applyPoses(interpolated, animated: true)
         } else {
             // Carousel angle-based animation
-            for i in slots.indices {
-                slots[i].angle = animStartAngles[i] + animDeltaPerSlot[i] * t
+            for i in stagePanels.indices {
+                stagePanels[i].angle = animStartAngles[i] + animDeltaPerSlot[i] * t
             }
             updatePanelPosesCarousel()
         }
@@ -889,7 +880,7 @@ class WindowStage {
             }
 
             // Re-enable shadows
-            for panel in panels { panel.hasShadow = true }
+            for sp in stagePanels { sp.panel.hasShadow = true }
             animCompletion?()
             animCompletion = nil
         }
@@ -899,19 +890,19 @@ class WindowStage {
 
     private func normalizeAngles() {
         let twoPi = 2 * CGFloat.pi
-        for i in slots.indices {
-            var a = slots[i].angle.truncatingRemainder(dividingBy: twoPi)
+        for sp in stagePanels {
+            var a = sp.angle.truncatingRemainder(dividingBy: twoPi)
             if a < 0 { a += twoPi }
-            slots[i].angle = a
+            sp.angle = a
         }
     }
 
     private func updateFrontSlotIndex() {
-        guard !slots.isEmpty else { return }
+        guard !stagePanels.isEmpty else { return }
         var bestIndex = 0
-        var bestDist = angularDistFromFront(slots[0].angle)
-        for i in 1..<slots.count {
-            let dist = angularDistFromFront(slots[i].angle)
+        var bestDist = angularDistFromFront(stagePanels[0].angle)
+        for i in 1..<stagePanels.count {
+            let dist = angularDistFromFront(stagePanels[i].angle)
             if dist < bestDist {
                 bestDist = dist
                 bestIndex = i

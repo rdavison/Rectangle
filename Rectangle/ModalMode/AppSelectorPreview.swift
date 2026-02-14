@@ -35,12 +35,10 @@ extension AppSelectorWindow {
 
         if let stage = windowStage {
             if stage.layout == .carousel {
-                // Already in carousel — cycle it
                 if direction != 0 {
                     stage.cycle(direction: direction)
                 }
             } else {
-                // Transition from backdrop layout to carousel with target window at front
                 stage.transitionTo(.carousel, animated: true, frontIndex: index)
             }
         }
@@ -58,7 +56,9 @@ extension AppSelectorWindow {
             guard let nsImg = WindowScreenshot.capture(windowID: windowID, maxSize: captureSize) else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, self.selectionGeneration == gen, self.isPreviewingWindow else { return }
-                self.windowStage?.updateFrontImage(nsImg)
+                // Use forWindowID: so the image always goes to the correct panel,
+                // even if frontSlotIndex has moved due to rapid backtick presses.
+                self.windowStage?.updateImage(nsImg, forWindowID: windowID)
 
                 // Live refresh at 200ms — only the front window, only when not animating
                 self.previewRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -68,7 +68,7 @@ extension AppSelectorWindow {
                     DispatchQueue.global(qos: .userInteractive).async { [weak self] in
                         guard let nsImg = WindowScreenshot.capture(windowID: frontWID, maxSize: captureSize) else { return }
                         DispatchQueue.main.async { [weak self] in
-                            self?.windowStage?.updateFrontImage(nsImg)
+                            self?.windowStage?.updateImage(nsImg, forWindowID: frontWID)
                         }
                     }
                 }
