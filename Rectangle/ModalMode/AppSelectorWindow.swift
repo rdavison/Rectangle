@@ -49,6 +49,20 @@ class AppSelectorWindow: SelectorNode {
         return orderedPIDs
     }
 
+    /// Promote previousApp PID to front of the MRU list.
+    /// Z-order can be wrong when another app has an always-on-top window (PiP, popup)
+    /// at normalLevel, so we trust NSWorkspace.frontmostApplication as ground truth.
+    static func promotePreviousApp(pid: pid_t?, in pids: [pid_t], myPID: pid_t) -> [pid_t] {
+        guard let pid = pid, pid != myPID,
+              let index = pids.firstIndex(of: pid), index != 0 else {
+            return pids
+        }
+        var result = pids
+        result.remove(at: index)
+        result.insert(pid, at: 0)
+        return result
+    }
+
     /// Filter windows for the 3D backdrop display.
     static func filterWindowsForBackdrop(
         from windows: [WindowInfo],
@@ -176,11 +190,13 @@ class AppSelectorWindow: SelectorNode {
         let appsByPID = Dictionary(uniqueKeysWithValues: runningApps.map { ($0.processIdentifier, $0) })
 
         // MRU apps first, then any running apps without visible windows
-        var ordered: [NSRunningApplication] = orderedPIDs.compactMap { appsByPID[$0] }
-        let orderedSet = Set(orderedPIDs)
+        let promotedPIDs = Self.promotePreviousApp(pid: previousApp?.processIdentifier, in: orderedPIDs, myPID: myPID)
+        var ordered: [NSRunningApplication] = promotedPIDs.compactMap { appsByPID[$0] }
+        let orderedSet = Set(promotedPIDs)
         for app in runningApps where !orderedSet.contains(app.processIdentifier) {
             ordered.append(app)
         }
+
         apps = ordered
 
         let appNames = apps.prefix(10).map { $0.localizedName ?? "pid:\($0.processIdentifier)" }

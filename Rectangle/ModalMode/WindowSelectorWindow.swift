@@ -80,7 +80,13 @@ class WindowSelectorWindow: SelectorNode {
             ModalModeManager.shared.deactivate(restoreLayout: false)
         }
         selectorPanel = panel
+        panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1.0
+        }
         let t3 = CACurrentMediaTime()
 
         // Capture real thumbnails async
@@ -108,12 +114,27 @@ class WindowSelectorWindow: SelectorNode {
     }
 
     func deactivate() {
+        deactivate(animated: false)
+    }
+
+    func deactivate(animated: Bool) {
         refreshTimer?.invalidate()
         refreshTimer = nil
         axElements.removeAll()
         screenshotCache.removeAll()
-        selectorPanel?.orderOut(nil)
-        selectorPanel = nil
+        if animated, let panel = selectorPanel {
+            selectorPanel = nil
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                panel.animator().alphaValue = 0
+            } completionHandler: {
+                panel.orderOut(nil)
+            }
+        } else {
+            selectorPanel?.orderOut(nil)
+            selectorPanel = nil
+        }
     }
 
     func handleKeyDown(keyCode: Int, modifiers: NSEvent.ModifierFlags, characters: String?) -> KeyEventResult {

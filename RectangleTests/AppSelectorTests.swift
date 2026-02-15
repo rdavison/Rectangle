@@ -422,6 +422,62 @@ class AppSelectorTests: XCTestCase {
         XCTAssertEqual(result.first?.id, 2)
     }
 
+    // MARK: - Previous App Promotion
+
+    func testPromotePreviousAppMovesToFront() {
+        // PID 20 is the previous app but z-order puts PID 10 first (e.g. PiP window)
+        let pids: [pid_t] = [10, 20, 30]
+        let result = AppSelectorWindow.promotePreviousApp(pid: 20, in: pids, myPID: 999)
+        XCTAssertEqual(result, [20, 10, 30], "Previous app should be promoted to front")
+    }
+
+    func testPromotePreviousAppAlreadyFirstIsNoOp() {
+        let pids: [pid_t] = [10, 20, 30]
+        let result = AppSelectorWindow.promotePreviousApp(pid: 10, in: pids, myPID: 999)
+        XCTAssertEqual(result, [10, 20, 30], "No change when previous app is already first")
+    }
+
+    func testPromotePreviousAppNilIsNoOp() {
+        let pids: [pid_t] = [10, 20, 30]
+        let result = AppSelectorWindow.promotePreviousApp(pid: nil, in: pids, myPID: 999)
+        XCTAssertEqual(result, [10, 20, 30], "No change when previous app is nil")
+    }
+
+    func testPromotePreviousAppNotInListIsNoOp() {
+        let pids: [pid_t] = [10, 20, 30]
+        let result = AppSelectorWindow.promotePreviousApp(pid: 40, in: pids, myPID: 999)
+        XCTAssertEqual(result, [10, 20, 30], "No change when previous app not in list")
+    }
+
+    func testPromotePreviousAppSkipsMyPID() {
+        let pids: [pid_t] = [10, 999, 30]
+        let result = AppSelectorWindow.promotePreviousApp(pid: 999, in: pids, myPID: 999)
+        XCTAssertEqual(result, [10, 999, 30], "Should not promote our own PID")
+    }
+
+    func testPromotePreviousAppWithPiPWindow() {
+        // Simulates the Firefox PiP scenario: PID 10 (Firefox) has a PiP window at front
+        // of z-order, but PID 20 (iTerm) is the actual frontmost app
+        let onScreen = [
+            makeWindow(id: 700, pid: 10, isOnscreen: true),  // Firefox PiP
+            makeWindow(id: 93, pid: 20, isOnscreen: true),   // iTerm window
+            makeWindow(id: 128, pid: 30, isOnscreen: true),  // Discord window
+            makeWindow(id: 430, pid: 10, isOnscreen: true),  // Firefox main window
+        ]
+
+        let pids = AppSelectorWindow.buildMRUPIDs(
+            onScreenWindows: onScreen, allWindows: onScreen, myPID: 999,
+            normalLevel: normalLevel, hiddenPIDs: []
+        )
+
+        // Z-order says Firefox first
+        XCTAssertEqual(pids, [10, 20, 30])
+
+        // But previousApp (iTerm, pid 20) should be promoted
+        let promoted = AppSelectorWindow.promotePreviousApp(pid: 20, in: pids, myPID: 999)
+        XCTAssertEqual(promoted, [20, 10, 30], "Frontmost app should override z-order when PiP is present")
+    }
+
     func testMRUOnScreenAppBeatsHiddenAppEvenIfHiddenWindowComesFirst() {
         // On-screen list only has visible windows
         let onScreen = [
